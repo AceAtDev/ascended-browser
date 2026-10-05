@@ -55,10 +55,16 @@ From Python (3.11 or newer) or from npm; both run the same server.
 
 ```bash
 uvx ascended-browser doctor          # checks the machine; downloads nothing
-uvx ascended-browser fetch           # downloads the Camoufox browser (otherwise on first use)
+uvx ascended-browser fetch           # downloads the browser now (~700 MB; otherwise on first use)
 
 npx -y ascended-browser doctor       # the same, from npm
 ```
+
+The browser is Camoufox 135.0.1-beta.24, the build every test here ran on; it is
+pinned, so a newer Camoufox release never changes what your agent drives, and
+any other Camoufox you have installed is left as it is. Run `fetch` once before
+adding the server to an agent, so its first tool call does not wait for the
+download.
 
 The npm package is a small launcher: it runs the Python package with `uvx`
 when [uv](https://docs.astral.sh/uv/) is installed (uv brings its own Python),

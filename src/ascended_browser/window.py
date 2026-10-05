@@ -62,6 +62,9 @@ class BrowserWindow:
         kiosk = os.environ.get("ASCENDED_BROWSER_KIOSK", "").strip() in {"1", "true", "yes"}
 
         def launch_options(*args, **kwargs):
+            from .browser_build import pin
+
+            pin(download=True)  # the tested Camoufox build, never whatever is newest
             options = original(*args, **kwargs)
             options["headless"] = self.headless
             if self.display:

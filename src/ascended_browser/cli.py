@@ -13,13 +13,16 @@ import shutil
 import sys
 
 from . import __version__
+from .browser_build import PINNED
 
 
 def _camoufox_path() -> str:
+    """The pinned Camoufox build, if it is installed."""
     try:
-        from camoufox.pkgman import camoufox_path
+        from .browser_build import installed_path
 
-        return str(camoufox_path(download_if_missing=False))
+        path = installed_path()
+        return str(path) if path else ""
     except Exception:
         return ""
 
@@ -33,7 +36,7 @@ def doctor() -> int:
         "python": platform.python_version(),
         "platform": platform.platform(),
         "data_dir": str(data_dir()),
-        "camoufox_browser": _camoufox_path() or "missing: run `ascended-browser fetch`",
+        "camoufox_browser": _camoufox_path() or f"missing (Camoufox {PINNED}): run `ascended-browser fetch`",
         "window": {False: "visible", True: "headless", "virtual": "virtual display (Xvfb)"}[_window_mode()],
         "xvfb": shutil.which("Xvfb") or ("not needed" if not sys.platform.startswith("linux") else "missing (headless instead)"),
     }
@@ -42,11 +45,15 @@ def doctor() -> int:
 
 
 def fetch() -> int:
-    from camoufox.pkgman import CamoufoxFetcher
+    from .browser_build import pin
 
-    CamoufoxFetcher().install()
-    print(_camoufox_path() or "Camoufox fetch did not complete", file=sys.stderr)
-    return 0 if _camoufox_path() else 1
+    try:
+        path = pin(download=True)
+    except Exception as exc:
+        print(f"Camoufox {PINNED} fetch failed: {exc}", file=sys.stderr)
+        return 1
+    print(path, file=sys.stderr)
+    return 0
 
 
 def main() -> None:

@@ -144,6 +144,9 @@ async def serve(protocol_out: io.TextIOWrapper) -> None:
     from .window import (BrowserWindow, apply_frame_size, demo_log, install_demo_events, log_boxes, log_find,
                          log_geometry, refs_in_result)
 
+    from .browser_build import prefetch
+
+    prefetch()  # first run: start the browser download now, not at the first tool call
     window = BrowserWindow()
 
     class Manager(BrowserWorkspaceManager):
