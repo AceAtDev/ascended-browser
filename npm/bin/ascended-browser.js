@@ -23,14 +23,30 @@ function works(cmd, args) {
   return result.status === 0 ? (result.stdout || "").trim() : null;
 }
 
-function run(cmd, args) {
-  const child = spawn(cmd, args, { stdio: "inherit" });
-  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => child.kill(signal));
+let current = null;
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => current && current.kill(signal));
+
+// retry(stderrText) may start another attempt and return true; otherwise the
+// launcher exits with the child's status.
+function run(cmd, args, retry) {
+  const child = spawn(cmd, args, { stdio: ["inherit", "inherit", retry ? "pipe" : "inherit"] });
+  current = child;
+  let tail = "";
+  if (retry) {
+    child.stderr.on("data", (chunk) => {
+      process.stderr.write(chunk);
+      tail = (tail + chunk.toString()).slice(-4000);
+    });
+  }
   child.on("error", (err) => {
     process.stderr.write(`ascended-browser: could not start ${cmd}: ${err.message}\n`);
     process.exit(1);
   });
-  child.on("exit", (code, signal) => (signal ? process.kill(process.pid, signal) : process.exit(code ?? 0)));
+  child.on("exit", (code, signal) => {
+    if (signal) return process.kill(process.pid, signal);
+    if (code !== 0 && retry && retry(tail)) return;
+    process.exit(code ?? 0);
+  });
 }
 
 function python() {
@@ -69,7 +85,15 @@ function venvLaunch() {
 }
 
 const launchers = {
-  uvx: () => run("uvx", ["--from", SPEC, "ascended-browser", ...ARGS]),
+  // uv may answer from a cached copy of PyPI's index for a few minutes after a
+  // release ("there is no version ..."); one retry with a fresh index fixes it.
+  uvx: () =>
+    run("uvx", ["--from", SPEC, "ascended-browser", ...ARGS], (stderr) => {
+      if (!/no version of|No solution found/.test(stderr)) return false;
+      process.stderr.write("ascended-browser: refreshing the package index and retrying\n");
+      run("uvx", ["--refresh-package", "ascended-browser", "--from", SPEC, "ascended-browser", ...ARGS]);
+      return true;
+    }),
   pipx: () => run("pipx", ["run", "--spec", SPEC, "ascended-browser", ...ARGS]),
   venv: venvLaunch,
 };
