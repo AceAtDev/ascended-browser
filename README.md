@@ -21,9 +21,19 @@ and outlines are drawn afterwards from the server's event log
 The full unedited screen recordings are in [`videos/unedited/`](videos/unedited/)
 (the browser is driven through Playwright, so no OS pointer appears in them).
 
-- [`videos/browse.mp4`](videos/browse.mp4): types into Wikipedia's search, reads the article, then searches YouTube and plays the first video.
-- [`videos/dev-react.mp4`](videos/dev-react.mp4): react.dev on a phone and a tablet, dark/light, before/after screenshots, an audit outlining real offending elements, console and network.
-- [`videos/booking.mp4`](videos/booking.mp4): booking.com: popup, destination autocomplete, date picker, search, sort by price.
+<a href="https://github.com/AceAtDev/ascended-browser/blob/main/videos/dev-react.mp4"><img src="https://github.com/AceAtDev/ascended-browser/raw/main/videos/dev-react.gif" alt="Front-end QA. react.dev on a phone and a tablet, dark/light, before/after screenshots, an audit outlining the real offending elements, console and network." width="760"></a>
+
+**Front-end QA.** react.dev on a phone and a tablet, dark/light, before/after screenshots, an audit outlining the real offending elements, console and network.
+
+<a href="https://github.com/AceAtDev/ascended-browser/blob/main/videos/browse.mp4"><img src="https://github.com/AceAtDev/ascended-browser/raw/main/videos/browse.gif" alt="Browsing. Types into Wikipedia's search, finds a fact in the article, then searches YouTube and plays the first video." width="760"></a>
+
+**Browsing.** Types into Wikipedia's search, finds a fact in the article, then searches YouTube and plays the first video.
+
+<a href="https://github.com/AceAtDev/ascended-browser/blob/main/videos/booking.mp4"><img src="https://github.com/AceAtDev/ascended-browser/raw/main/videos/booking.gif" alt="Real forms. booking.com: popup, destination autocomplete, date picker, search, sort by price." width="760"></a>
+
+**Real forms.** booking.com: popup, destination autocomplete, date picker, search, sort by price.
+
+Click any clip for the full-quality MP4.
 
 ## Install
 
@@ -56,16 +66,16 @@ claude mcp add ascended-browser -- uvx ascended-browser
 # or: claude mcp add ascended-browser -- npx -y ascended-browser
 ```
 
-**Codex** (`~/.codex/config.toml`)
+**Codex**
 
-```toml
-[mcp_servers.ascended-browser]
-command = "uvx"
-args = ["ascended-browser"]
-tool_timeout_sec = 240
-# Codex asks before each MCP tool call; `codex exec` cannot ask and fails them.
-default_tools_approval_mode = "approve"
+```bash
+codex mcp add ascended-browser -- uvx ascended-browser
 ```
+
+Codex asks for approval before browser actions; approve them when it asks.
+For `codex exec` (which cannot ask, so every call would fail), add
+`default_tools_approval_mode = "approve"` under `[mcp_servers.ascended-browser]`
+in `~/.codex/config.toml`.
 
 **opencode** (`opencode.json`)
 
