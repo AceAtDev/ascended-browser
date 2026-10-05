@@ -719,7 +719,7 @@
       "tablet",
       "desktop"
      ],
-     "description": "set only: the live view's profile sizes, phone 390x844, tablet 768x1024, desktop 1365x768."
+     "description": "set only: phone 390x844, tablet 768x1024, desktop 1365x768 (CSS pixels)."
     },
     "width": {
      "type": "integer",

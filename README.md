@@ -120,7 +120,7 @@ command `uvx` and args `["ascended-browser"]`, or command `npx` and args
 | `browser_open` | Open a URL (or several at once) and return what is on the page, each control with a ref |
 | `browser_observe` | Look at the page again, or narrow to a region, a query or a filter |
 | `browser_act` | `navigate`, `click`, `fill`, `fill_form`, `select`, `check`, `date`, `press`, `upload`, `scroll`, `wait`, `sequence`: each verified, each answered with what changed |
-| `browser_extract` | Read the page's text and field state, query by CSS selector, pull repeated items into a JSON shape, or `read=console`, `read=network`, `read=inspect` to debug a page |
+| `browser_extract` | Read the page's text and field state, `find` a phrase, list every match of a CSS selector with its text and attributes (every product link, every price), or `read=console`, `read=network`, `read=inspect`, `read=audit`, `read=design` to debug a page |
 | `browser_screenshot` | A picture, when an observation cannot describe it: canvas, charts, visual layout; `compare_with` diffs against an earlier picture or another tab |
 | `browser_viewport` | Resize to phone/tablet/desktop (Linux), emulate dark mode, reduced motion, forced colors or offline |
 | `browser_evaluate` | Read-only JavaScript, policy-checked |
@@ -142,13 +142,19 @@ context.
 | `ASCENDED_SETTING_<KEY>` | | Any browser setting, e.g. `ASCENDED_SETTING_BROWSER_WORKSPACE_OBSERVE_FORMAT=outline` |
 | `ASCENDED_LOG_LEVEL` | `WARNING` | Logs go to stderr |
 
-## Limits (0.1)
+## Limits
 
-- **Resizing the window** (phone/tablet presets, multi-size screenshot
-  grids) runs through Ascended's live view, which this package does not
-  ship yet. Emulation (dark mode and the rest) works.
-- **Saved logins** (`browser_login`) and **schema extraction backed by a
-  model** need the Ascended app.
+- **Window resizing** (`browser_viewport` phone/tablet/desktop presets or any
+  width and height) works on Linux: on the package's own virtual display by
+  default, or on your X11 display with `ASCENDED_BROWSER_WINDOW=show`. On macOS
+  and Windows the window keeps its launch size; emulation (dark mode, reduced
+  motion, forced colors, offline) works everywhere. Screenshot grids across
+  several sizes in one call are not included.
+- **Model-backed features of the Ascended app are not in this package:**
+  schema-shaped extraction (a model reads the page into your JSON shape) and
+  saved logins (`browser_login`). Their tools and parameters are not exposed,
+  so an agent never sees them. Everything listed under Tools runs without a
+  model.
 - One server process is one browser session: tabs and refs last until your
   client disconnects; the profile (cookies, sign-ins) lasts across sessions.
 
@@ -167,8 +173,7 @@ live-website tasks given to real agents (`tests/agents/`).
 What has been verified so far: Linux (Python 3.11, 3.12 and 3.14), with Claude
 Code and Codex (0.160) on live-site tasks, opencode on a navigation task, and
 the npm launcher through uvx and through its own venv. macOS and Windows should
-work headless or with a visible window, but are untested, and window resizing
-for phone/tablet checks is Linux-only for now.
+work headless or with a visible window, but are untested.
 
 ## License
 

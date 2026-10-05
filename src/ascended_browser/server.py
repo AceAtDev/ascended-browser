@@ -31,7 +31,7 @@ INSTRUCTIONS = (
     "browser_open loads a page and returns what is on it, each element with a ref; act with "
     "browser_act using those refs (click, fill, fill_form, select, check, date, press, upload, "
     "scroll). Results say what changed, so you rarely need browser_observe after an action. "
-    "Use browser_extract to read content or pull repeated items into a JSON schema, "
+    "Use browser_extract to read content, find a phrase, or list every match of a CSS selector, "
     "browser_viewport and browser_screenshot for responsive and visual checks, and "
     "browser_extract read=console|network|inspect to debug a page you are building. For public "
     "pages you only need to read, a fetch tool is faster than the browser."

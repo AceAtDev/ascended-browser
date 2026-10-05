@@ -129,6 +129,12 @@ DESCRIBE = {
         "stale after a resize, so use the new refs."
     ),
 }
+# Parameter descriptions that speak about the app.
+PARAM_DESCRIBE = {"browser_viewport": {
+    "preset": "set only: phone 390x844, tablet 768x1024, desktop 1365x768 (CSS pixels).",
+}}
+# Nothing an agent reads may promise what only the app has; the sync stops if it does.
+APP_WORDING = ("live view", "live-view", "browser_login", "Ascended app")
 # Wording that names a dropped property.
 # Sentences about a dropped property, removed after REWORD (the calling agent
 # is itself a model, so schema extraction by a second model is left out).
@@ -190,7 +196,14 @@ def tool_schemas(source: Path, python: Path) -> list[dict]:
                 prop["description"] = " ".join(
                     s for s in re.split(r"(?<=[.!?])\s+", str(prop.get("description", "")))
                     if not any(term in s for term in terms)) or prop.get("description", "")
+        for prop, text in PARAM_DESCRIBE.get(name, {}).items():
+            if prop in params.get("properties", {}):
+                params["properties"][prop]["description"] = text
         schemas.append({"name": name, "description": description, "inputSchema": params})
+    leaks = [f"{s['name']}: {term!r}" for s in schemas for term in APP_WORDING
+             if term.lower() in json.dumps(s).lower()]
+    if leaks:
+        raise SystemExit("tool schemas still describe app-only features:\n  " + "\n  ".join(leaks))
     return schemas
 
 
