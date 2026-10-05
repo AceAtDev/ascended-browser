@@ -1,0 +1,12 @@
+{
+  "name": "ascended-browser",
+  "version": "0.1.0",
+  "description": "A real, hardened browser for AI agents (MCP server): verified actions, page reading, dev tools. Runs the ascended-browser Python package.",
+  "license": "MIT",
+  "author": "Mohamed Elshoubky",
+  "keywords": ["mcp", "browser", "agent", "camoufox", "claude", "codex", "devtools"],
+  "bin": { "ascended-browser": "bin/ascended-browser.js" },
+  "files": ["bin/", "README.md", "LICENSE"],
+  "repository": { "type": "git", "url": "git+https://github.com/AceAtDev/ascended-browser.git" },
+  "engines": { "node": ">=18" }
+}

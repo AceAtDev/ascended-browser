@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ascended-browser"
+version = "0.1.0"
+description = "A real, hardened browser for AI agents: verified actions, page reading, dev tools. An MCP server."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+authors = [{ name = "Mohamed Elshoubky" }]
+keywords = ["mcp", "browser", "agent", "camoufox", "automation", "claude", "codex"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Internet :: WWW/HTTP :: Browsers",
+]
+dependencies = [
+    "mcp>=1.10,<2",  # the 1.x server API; 2.x reworked it
+    # The stack Ascended is tested on: the maintained Camoufox launcher (it
+    # installs as the `camoufox` package) with Playwright 1.58.
+    "cloverlabs-camoufox==0.6.0",
+    "playwright==1.58.0",
+    "httpx>=0.27",
+    "websockets>=12",
+    "pillow>=10",
+    "tldextract>=5",
+    "sqlalchemy>=2",
+    "pyotp>=2.9",
+    "curl_cffi>=0.7",
+    # Resizing the browser window for responsive checks (Linux, X11).
+    "python-xlib>=0.33; sys_platform == 'linux'",
+]
+
+[project.optional-dependencies]
+# Legacy Cloudflare JS-challenge fallback for wait_for_bot_wall.
+cloudscraper = ["cloudscraper"]
+
+[project.scripts]
+ascended-browser = "ascended_browser.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ascended_browser"]
+
+[tool.hatch.build.targets.sdist]
+exclude = ["videos", "runs", "demo/__pycache__"]

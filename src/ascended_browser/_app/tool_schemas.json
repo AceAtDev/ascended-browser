@@ -1,0 +1,845 @@
+[
+ {
+  "name": "browser_open",
+  "description": "Wake the workspace and open or navigate your current browser tab. Pass either url or a bounded urls list (maximum 5). To check several sites, open them in ONE call with urls: it opens independent tabs in the same authenticated browser context and returns one compact, ordered result per URL; that `results` list is the authoritative source for each tab_id. A URL that fails (DNS, block) is reported on its own row and the other tabs stay open. Batch results omit page bodies: next, call browser_extract/observe for every returned tab_id together in one response, since calls on different tabs run in parallel. Returns once the page has settled. By default it reuses your current actor-owned tab, including across a resumed task; set reuse=false only for a genuinely independent second tab (the result carries reused=true when reused). The single-URL result includes a settled `page` snapshot; use it directly instead of immediately calling browser_observe. Only a returned attention_required=true represents an explicit handoff. A blocked=true page result does not suspend the run: decide whether to take another route or tell the user plainly what could not be completed. For broad public discovery use web_search rather than navigating this tab to a search engine; browser search remains valid when explicitly requested or interaction/personalization matters.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "url": {
+     "type": "string",
+     "description": "Single-page form. Set this URL and leave urls empty/omitted."
+    },
+    "urls": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "maxItems": 5,
+     "description": "Batch form only. Leave url empty/omitted. Each URL opens its own tab; a failed URL does not close the others."
+    },
+    "atomic": {
+     "type": "boolean",
+     "description": "Rarely needed. true closes every batch tab if any URL fails (all-or-nothing). Omit for the normal independent behavior."
+    },
+    "disposition": {
+     "type": "string",
+     "enum": [
+      "discard",
+      "deliverable",
+      "handoff"
+     ]
+    },
+    "read": {
+     "type": "boolean",
+     "description": "Return the page's readable text with this result, so opening a page in order to read it is one call rather than open then browser_extract."
+    },
+    "reuse": {
+     "type": "boolean",
+     "description": "Single-page form only: default true. URL batches always use independent tabs so atomic rollback is possible."
+    }
+   },
+   "required": []
+  }
+ },
+ {
+  "name": "browser_tabs",
+  "description": "List, close, or sleep workspace tabs. Closing takes tab_id for one tab or tab_ids for several in a single call (at most 20); each tab's outcome is reported separately, so one unknown id does not strand the rest.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "action": {
+     "type": "string",
+     "enum": [
+      "list",
+      "close",
+      "sleep"
+     ]
+    },
+    "tab_id": {
+     "type": "string"
+    },
+    "tab_ids": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Several tabs to close in one call."
+    }
+   },
+   "required": [
+    "action",
+    "tab_id"
+   ]
+  }
+ },
+ {
+  "name": "browser_observe",
+  "description": "Observe a live tab and return generation-scoped element refs, on-screen controls first, current viewport content_blocks and measured scroll_containers. Treat auth_state as page evidence for your next decision; a visible login form does not itself stop the run. `diagnostics` lists page errors and failed requests since your previous result. When the result says elements were not shown, narrow the view instead of reading the DOM with browser_evaluate: query finds controls by their words, within scopes to a region, frame or element, and cursor continues where the last response stopped. Every ref returned is valid for browser_act.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "tab_id": {
+     "type": "string"
+    },
+    "query": {
+     "type": "string",
+     "description": "Words to find. Returns only controls whose role, label, text, value or option labels contain every word, searched across the whole page, not just what an earlier observation showed."
+    },
+    "within": {
+     "type": "string",
+     "description": "Scope to one region id (r\u2026) or frame id (f\u2026) from an earlier observation, or to an element ref (e.g. a dialog, listbox or form) and its descendants."
+    },
+    "cursor": {
+     "type": "string",
+     "description": "The next_cursor an earlier observation printed; continues the same ordering."
+    },
+    "filter": {
+     "type": "string",
+     "enum": [
+      "interactive",
+      "all",
+      "links"
+     ],
+     "description": "interactive (default) lists controls; all also lists the page's headings; links lists where the page can take you as text and URL, which fits a whole index in one answer. query applies to links too and matches the URL, so filter:'links' with query:'/jobs/' returns that section of the site. Every ref is still clickable."
+    }
+   },
+   "required": [
+    "tab_id"
+   ]
+  }
+ },
+ {
+  "name": "browser_act",
+  "description": "Perform one verified action in a leased tab. action.kind must be navigate|click|fill|fill_form|sequence|select|check|date|press|upload|scroll|wait (action.type is accepted as an alias for kind; type=type means fill). `ref` must be an exact ref=e\u2026 token from the newest page/observe/extract result for this tab \u2014 labels and row numbers are rejected; CSS/XPath/text selectors are not an agent-facing escape hatch. Reuse the fresh refs returned in an action's `page`; do not observe again after every field. A successful act returns either `page` (the page it produced, with fresh refs) or `page_unchanged: true`, meaning the URL and visible text are what your last observation showed and its refs still apply \u2014 observe again only for a different view (query, selector, region). Batch stable fields with `fill_form`, which reports each field separately. For anything that picks from a list (native selects, custom ARIA comboboxes and dropdowns, type-to-search boxes) use kind=select with option=<exact visible choice> and optional query=<filter text>; this performs and verifies open/filter/choose in one call. For anything with a checked or selected state, including list items, use kind=check with checked=true|false. Independent calls for distinct tab_ids may be issued together; calls targeting one tab remain ordered. Use sequence for a short reversible multi-step workflow when later-page targets can be named semantically. Every step is re-resolved from current page state, authority is rechecked, and the sequence stops before dispatch when an exact expect_before guard or a unique target is missing; use expect_after to guard a planned transition. Do not place a consequential final submit in a sequence. `until` waits inside the call for a late effect (redirect, async save, hot reload); kind=wait only waits. The same select fields can be included in fill_form. For a reversible draft/save action, a click receipt with state=network_effect_observed, a successful same-origin non-read response, matching control readback, and the page's save status is sufficient browser evidence. Do not activate unrelated controls, inspect hidden databases, or use shell/page scripts solely to obtain stronger private persistence proof. `upload` attaches files to an input[type=file] ref (or file_chooser=true with an observed attachment button ref) and is the ONLY way to do so \u2014 `fill` rejects file inputs. For a request such as 'keep scrolling until I stop you', use one scroll action with duration_seconds instead of spending repeated model rounds; cancelling/replacing the run stops it.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "tab_id": {
+     "type": "string"
+    },
+    "action": {
+     "type": "object",
+     "properties": {
+      "kind": {
+       "type": "string",
+       "enum": [
+        "navigate",
+        "click",
+        "fill",
+        "fill_form",
+        "sequence",
+        "select",
+        "check",
+        "date",
+        "press",
+        "upload",
+        "scroll",
+        "wait"
+       ]
+      },
+      "until": {
+       "type": "object",
+       "description": "All must hold before timeout_ms (default 5000, wait 10000, max 15000); a string means text. no_new_errors ends at the first page error.",
+       "properties": {
+        "text": {
+         "type": "string"
+        },
+        "text_gone": {
+         "type": "string"
+        },
+        "url_contains": {
+         "type": "string"
+        },
+        "ref_visible": {
+         "type": "string"
+        },
+        "ref_gone": {
+         "type": "string"
+        },
+        "network_idle": {
+         "type": "boolean"
+        },
+        "no_new_errors": {
+         "type": "boolean"
+        },
+        "wall_cleared": {
+         "type": "boolean"
+        },
+        "timeout_ms": {
+         "type": "integer",
+         "minimum": 250,
+         "maximum": 15000
+        }
+       }
+      },
+      "read": {
+       "type": "boolean",
+       "description": "Return the resulting page's readable text with this result. Use it when the action is a navigation you mean to read (a click into an article or a search result), so it is one call rather than the action then browser_extract."
+      },
+      "paths": {
+       "type": "array",
+       "description": "upload only: file paths to attach, relative to the active workspace or absolute. The ref must be a fresh input[type=file] ref; the attached filenames are read back off the element and an unverified attach fails.",
+       "items": {
+        "type": "string"
+       }
+      },
+      "file_chooser": {
+       "type": "boolean",
+       "description": "upload only: capture the file chooser before clicking the observed attachment-trigger ref. File selection evidence does not prove server acceptance or submission."
+      },
+      "upload_ids": {
+       "type": "array",
+       "description": "upload only, browser sub-agents only: opaque IDs from the assignment upload manifest. Sub-agents cannot upload paths.",
+       "items": {
+        "type": "string"
+       }
+      },
+      "list_options": {
+       "type": "boolean",
+       "description": "select only: open the control and report its visible options in `observed_options` WITHOUT selecting anything (`committed: false`). Use this first on a custom/filtered combobox whose exact option labels you do not already know, then select an exact label from the list. Combine with `query` to filter before reading. A failed select also returns `observed_options`, so read that instead of guessing a second time."
+      },
+      "fields": {
+       "type": "array",
+       "description": "fill_form only: fields executed in order. Plain field: {ref,value,label?}. Checkbox/radio: {ref,kind:'check',checked:true|false,label?}. Native/supported custom date: {ref,kind:'date',value:'YYYY-MM-DD' or 'YYYY-MM' for month-and-year fields,label?} on any part of the date field. Native/custom selection: {ref,kind:'select',option:'exact visible option',query?:'filter',label?}. Composite/native multi-select: {ref,kind:'select',options:['exact option 1','exact option 2'],label?}. Use one batch for every currently observed field in the same form, including supported custom selects. Give prerequisite fields ids and later dependent controls depends_on entries; the executor verifies prerequisites and refreshes changed options inside the batch.",
+       "items": {
+        "type": "object",
+        "properties": {
+         "ref": {
+          "type": "string"
+         },
+         "value": {
+          "type": "string",
+          "description": "Text value, or selection value when option is omitted."
+         },
+         "checked": {
+          "type": "boolean",
+          "description": "check only: exact desired checked state."
+         },
+         "kind": {
+          "type": "string",
+          "enum": [
+           "fill",
+           "select",
+           "check",
+           "date"
+          ],
+          "description": "Defaults to fill; select supports native and ARIA comboboxes; check supports checkbox/radio/switch controls; date accepts an ISO value and verifies a native input or supported ARIA calendar."
+         },
+         "query": {
+          "type": "string",
+          "description": "select only: optional text used to filter a custom combobox."
+         },
+         "option": {
+          "type": "string",
+          "description": "select only: exact visible option label to commit and verify."
+         },
+         "options": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          },
+          "description": "select only: exact visible labels that must all be committed and simultaneously verified in a multi-select."
+         },
+         "label": {
+          "type": "string",
+          "description": "Exact visible field label, used for unambiguous missing/stale-ref recovery and per-field outcomes."
+         },
+         "id": {
+          "type": "string",
+          "description": "Optional batch-local field identifier used by later depends_on entries."
+         },
+         "depends_on": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          },
+          "description": "Optional batch-local field ids that must verify before this field may dispatch. A contradicted dependency skips only its dependents; unrelated fields continue."
+         },
+         "observation_id": {
+          "type": "string",
+          "description": "Optional observation_id returned by the browser alongside this ref. Omit when unavailable; never use a managed-output file ID."
+         }
+        },
+        "required": [
+         "ref"
+        ]
+       }
+      },
+      "steps": {
+       "type": "array",
+       "minItems": 1,
+       "maxItems": 12,
+       "description": "sequence only: ordered reversible browser actions. Later-page click/fill/select/check/date targets may omit ref only when label (and preferably role/context) uniquely identifies the current control. Each step may use expect_before and expect_after with exact visible text and/or url_contains. The executor refreshes semantic state and stops on ambiguity, blockers, uncertainty, or failed guards.",
+       "items": {
+        "type": "object",
+        "properties": {
+         "kind": {
+          "type": "string",
+          "enum": [
+           "navigate",
+           "click",
+           "fill",
+           "fill_form",
+           "select",
+           "check",
+           "date",
+           "press",
+           "scroll"
+          ]
+         },
+         "ref": {
+          "type": "string"
+         },
+         "label": {
+          "type": "string"
+         },
+         "role": {
+          "type": "string"
+         },
+         "context": {
+          "type": "string"
+         },
+         "url": {
+          "type": "string"
+         },
+         "value": {
+          "type": "string"
+         },
+         "checked": {
+          "type": "boolean"
+         },
+         "query": {
+          "type": "string"
+         },
+         "option": {
+          "type": "string"
+         },
+         "options": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         },
+         "key": {
+          "type": "string"
+         },
+         "fields": {
+          "type": "array",
+          "items": {
+           "type": "object"
+          }
+         },
+         "expect_before": {
+          "type": "object",
+          "properties": {
+           "text": {
+            "type": "string"
+           },
+           "text_gone": {
+            "type": "string"
+           },
+           "url_contains": {
+            "type": "string"
+           }
+          }
+         },
+         "expect_after": {
+          "type": "object",
+          "properties": {
+           "text": {
+            "type": "string"
+           },
+           "text_gone": {
+            "type": "string"
+           },
+           "url_contains": {
+            "type": "string"
+           }
+          }
+         }
+        },
+        "required": [
+         "kind"
+        ]
+       }
+      },
+      "type": {
+       "type": "string",
+       "description": "Alias for kind; 'type' means fill."
+      },
+      "ref": {
+       "type": "string"
+      },
+      "url": {
+       "type": "string"
+      },
+      "value": {
+       "type": "string",
+       "description": "Fill/check value; for select, used as the option when option is omitted."
+      },
+      "checked": {
+       "type": "boolean",
+       "description": "check only: exact desired checked state; defaults to true."
+      },
+      "text": {
+       "type": "string",
+       "description": "Alias for value when filling."
+      },
+      "query": {
+       "type": "string",
+       "description": "select only: optional filter text for a custom ARIA combobox."
+      },
+      "option": {
+       "type": "string",
+       "description": "select only: exact visible option label to choose and verify."
+      },
+      "options": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       },
+       "description": "select only: exact visible labels that must all be committed and simultaneously verified in a multi-select."
+      },
+      "key": {
+       "type": "string",
+       "description": "Key for press (alias: keys): a key name such as Escape or Control+a, or plain text to type. With ref, the key goes to that element."
+      },
+      "keys": {
+       "type": "string",
+       "description": "Alias for key."
+      },
+      "direction": {
+       "type": "string",
+       "enum": [
+        "down",
+        "up"
+       ],
+       "description": "scroll only; defaults to down."
+      },
+      "delta_y": {
+       "type": "integer",
+       "description": "scroll only; pixels per step (80-4000, default 720)."
+      },
+      "interval_ms": {
+       "type": "integer",
+       "description": "scroll only; delay between steps (100-5000ms)."
+      },
+      "duration_seconds": {
+       "type": "number",
+       "description": "scroll only; 0 performs one step. For continuous user-directed scrolling set a bounded duration up to 3600 seconds; the user can stop or replace the active run at any time."
+      },
+      "label": {
+       "type": "string",
+       "description": "Exact visible label used to safely re-resolve one stale action ref; ambiguous matches fail."
+      },
+      "observation_id": {
+       "type": "string",
+       "description": "Optional observation_id returned by the browser alongside this ref. Omit when unavailable; never use a managed-output file ID."
+      },
+      "reasoning": {
+       "type": "string",
+       "description": "One short phrase for what this action is meant to accomplish. Read alongside the visible label when deciding whether the action is yours to take."
+      },
+      "expect": {
+       "type": "object",
+       "description": "click only: optional visible postcondition checked inside the same action. Use text, text_gone (text that must disappear) and/or url_contains when the intended effect is observable; omit rather than guessing.",
+       "properties": {
+        "text": {
+         "type": "string"
+        },
+        "text_gone": {
+         "type": "string"
+        },
+        "url_contains": {
+         "type": "string"
+        }
+       }
+      },
+      "expect_before": {
+       "type": "object",
+       "description": "Optional exact current-page guard checked again under the action lock before dispatch.",
+       "properties": {
+        "text": {
+         "type": "string"
+        },
+        "text_gone": {
+         "type": "string"
+        },
+        "url_contains": {
+         "type": "string"
+        }
+       }
+      },
+      "expect_after": {
+       "type": "object",
+       "description": "sequence step only: exact visible postcondition required before the next step may run.",
+       "properties": {
+        "text": {
+         "type": "string"
+        },
+        "text_gone": {
+         "type": "string"
+        },
+        "url_contains": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    }
+   },
+   "required": [
+    "tab_id",
+    "action"
+   ]
+  }
+ },
+ {
+  "name": "browser_extract",
+  "description": "Extract the complete current visible content and structured field/page state from a tab. Pass target_ref to scope a fresh read to an observed content block, control or the ARIA region it owns. This is a fresh high-level read, not a change-only observation. If a large result returns evidence_ref and next_cursor from browser_extract, continue it with this same tool. Do not continue a managed-output reference from browser_open, browser_observe, or browser_act; start a fresh extraction with tab_id and instruction instead. Pass selector for an instant CSS query instead of a full read: it counts and lists matching elements (tag, text, requested attributes, and the ref of any match already in the current observation) without building a snapshot, e.g. every product link's href, how many rows a table has, or each card's price. read=console|network reads the tab's logs (with same-site error bodies); read=inspect with target_ref says why a click is refused or a control will not take a value: what receives the click there, what covers or clips it, disabled state, styles. read=design returns how the page looks in CSS terms: variables, colors by use, type scale, radii, shadows, spacing and layout regions with sizes; target_ref limits it to one component. read=audit audits the page you are on (a deployed or localhost site): accessibility violations (axe-core) with the ref of each element, load timings and weight, title/lang/description/headings/alt gaps, broken same-origin links and console errors, worst first.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "tab_id": {
+     "type": "string",
+     "description": ""
+    },
+    "read": {
+     "type": "string",
+     "enum": [
+      "page",
+      "console",
+      "network",
+      "inspect",
+      "design",
+      "audit"
+     ],
+     "description": ""
+    },
+    "checks": {
+     "type": "array",
+     "items": {
+      "type": "string",
+      "enum": [
+       "accessibility",
+       "performance",
+       "seo",
+       "links"
+      ]
+     },
+     "description": "read=audit: which checks to run; omit for all four."
+    },
+    "level": {
+     "type": "string",
+     "enum": [
+      "error",
+      "warning",
+      "log",
+      "info"
+     ],
+     "description": ""
+    },
+    "filter": {
+     "type": "string",
+     "description": "read=network: URL regex, e.g. '/api/'."
+    },
+    "types": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "read=network: e.g. ['fetch','xhr']."
+    },
+    "failed_only": {
+     "type": "boolean",
+     "description": "read=network: failed or 4xx/5xx only."
+    },
+    "navigations": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 3,
+     "description": ""
+    },
+    "selector": {
+     "type": "string",
+     "description": "CSS selector to query instead of reading the page (e.g. 'table tbody tr', 'a.product-link', 'article h2'). Returns total, and for each match up to max_results: tag, text, attrs, children_count, visible, and ref when the element is in the current observation. An invalid selector is an error; no match is an empty result, not an error."
+    },
+    "attributes": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "selector only: attributes to return per match, e.g. ['href'] or ['src', 'alt']. href/src are complete absolute URLs, or explicitly omitted when longer than 8192 characters. Other attributes are bounded previews. value is the live field value (secrets read as [redacted])."
+    },
+    "max_results": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 200,
+     "description": "selector or log reads: entries per page (default 50). total always counts every match; continue with cursor=next_cursor."
+    },
+    "include_text": {
+     "type": "boolean",
+     "description": "selector only: include each match's text (default true). Set false when only attributes or the count matter."
+    },
+    "instruction": {
+     "type": "string",
+     "description": "Fresh extraction: optional objective used to focus field state and report an explicit no-match result. Continuation: accepted as a harmless repeated hint but archived evidence is returned unchanged."
+    },
+    "find": {
+     "type": "string",
+     "description": "Return every passage that mentions this, with the words around it, instead of the page's text. Use it when the page is long and the question is narrow (a deadline, a price, a name)."
+    },
+    "from_end": {
+     "type": "boolean",
+     "description": "Read the end of the page rather than the beginning. Footers, totals and closing dates live there, and paging forward charges for everything above them."
+    },
+    "target_ref": {
+     "type": "string",
+     "description": "Fresh extraction, read=inspect or read=design: exact ref from the current observation (read=design also takes a region id r\u2026). Reads that element, or the uniquely related region named by aria-controls, without executing page JavaScript in the model loop."
+    },
+    "evidence_ref": {
+     "type": "string",
+     "description": "Continuation only: opaque evidence_ref returned by an earlier browser_extract result in this session, accompanied by next_cursor."
+    },
+    "cursor": {
+     "type": "integer",
+     "minimum": 0,
+     "description": "With evidence_ref: character offset from next_cursor. With selector or log reads: entry offset from next_cursor. Defaults to 0."
+    },
+    "limit": {
+     "type": "integer",
+     "minimum": 512,
+     "maximum": 12000,
+     "description": "Continuation only: maximum characters for this slice; defaults to 8000."
+    }
+   },
+   "required": [
+    "tab_id"
+   ]
+  }
+ },
+ {
+  "name": "browser_screenshot",
+  "description": "Take a picture of an agent-owned tab. This is a last resort, not a way to find or operate controls: browser_observe returns the refs browser_act needs, and a picture returns none. Use it only for what an observation cannot describe (canvas, charts, images, visual layout). Password and payment fields are masked. The result states the viewport size at capture; a person may resize the live window, so trust it over sizes you saw earlier. state captures a ref's :hover/:focus styling; compare_with diffs against an earlier picture or another tab and boxes what changed. To check a page you are building against an original, open both and take one with compare_with='tab:<original tab_id>': one picture of both.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "tab_id": {
+     "type": "string",
+     "description": "The agent-owned tab to capture."
+    },
+    "state": {
+     "type": "string",
+     "enum": [
+      "hover",
+      "focus"
+     ]
+    },
+    "compare_with": {
+     "type": "string",
+     "description": "'previous' (this tab's last picture), 'tab:<tab_id>' (another tab, e.g. the original site beside your build; pages of different heights come back side by side), or an evidence path; same scope and size."
+    },
+    "scope": {
+     "type": "string",
+     "enum": [
+      "viewport",
+      "full_page",
+      "element"
+     ],
+     "description": "viewport (default) is what is on screen now; full_page is the scrollable document, cut at 8000 px; element is one ref."
+    },
+    "ref": {
+     "type": "string",
+     "description": "scope=element or state: a ref from the latest browser_observe of this tab."
+    },
+    "label": {
+     "type": "string",
+     "description": "Short caption naming the picture, e.g. 'Application form before submit'; used in the evidence file name."
+    }
+   },
+   "required": [
+    "tab_id"
+   ]
+  }
+ },
+ {
+  "name": "browser_viewport",
+  "description": "Check a responsive layout in the current agent-owned tab. action=set with preset phone (390x844), tablet (768x1024) or desktop (1365x768), or width and height in CSS pixels, resizes the real browser window so the page reflows as it would on that screen (Linux; elsewhere the window keeps its size). action=restore returns to the launch size and clears emulation; call it when the check is done. action=get reads the current size. action=emulate sets color_scheme (light or dark), reduced_motion, forced_colors or offline. A successful set or restore includes a fresh page snapshot; earlier element positions are stale after a resize, so use the new refs.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "tab_id": {
+     "type": "string",
+     "description": "The current agent-owned browser tab whose shared native window is targeted."
+    },
+    "action": {
+     "type": "string",
+     "enum": [
+      "get",
+      "set",
+      "restore",
+      "emulate"
+     ],
+     "description": "get reads size and emulation; set applies a preset or width and height; restore returns to dynamic sizing and clears emulation."
+    },
+    "color_scheme": {
+     "type": "string",
+     "enum": [
+      "light",
+      "dark",
+      "no-preference"
+     ]
+    },
+    "reduced_motion": {
+     "type": "string",
+     "enum": [
+      "reduce",
+      "no-preference"
+     ]
+    },
+    "forced_colors": {
+     "type": "string",
+     "enum": [
+      "active",
+      "none"
+     ]
+    },
+    "offline": {
+     "type": "boolean",
+     "description": "emulate: fail every request in this browser context."
+    },
+    "clear": {
+     "type": "boolean",
+     "description": "emulate: clear all emulation."
+    },
+    "preset": {
+     "type": "string",
+     "enum": [
+      "phone",
+      "tablet",
+      "desktop"
+     ],
+     "description": "set only: the live view's profile sizes, phone 390x844, tablet 768x1024, desktop 1365x768."
+    },
+    "width": {
+     "type": "integer",
+     "minimum": 1,
+     "description": "set only, without preset: requested page-content width in CSS pixels."
+    },
+    "height": {
+     "type": "integer",
+     "minimum": 1,
+     "description": "set only, without preset: requested page-content height in CSS pixels."
+    }
+   },
+   "required": [
+    "tab_id",
+    "action"
+   ]
+  }
+ },
+ {
+  "name": "browser_evaluate",
+  "description": "Run policy-gated read-only JavaScript in a tab only when browser_extract or browser_observe cannot return the required fact. For visible page text, labels, controls, or a region owned by aria-controls, use browser_extract instead; for computed styles, colors, fonts, sizes, icons or backgrounds, browser_extract read=design (the page, or one component with target_ref) or read=inspect (one element's box and styles).",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "tab_id": {
+     "type": "string"
+    },
+    "function": {
+     "type": "string",
+     "description": "JS function/expression (aliases: expression, code, js, script)."
+    },
+    "arg": {
+     "description": "Optional argument passed to the function."
+    }
+   },
+   "required": [
+    "tab_id",
+    "function"
+   ]
+  }
+ },
+ {
+  "name": "browser_flow",
+  "description": "Record and replay browser work. Every verified browser_act on a tab is recorded (targets by what they are, not by ref; passwords and other secrets never). After a task succeeds once, action=save turns that tab's recorded steps into a flow; action=run replays it on a tab with no model call between steps, re-finding each element on the live page, so repeating the task (the next job application on the same site, the next record in the same form) takes seconds. Pass start_url for the new page and variables for the values that change; save reports the detected variables. A run stops at the first step it cannot find unambiguously or verify, and says which steps are done and which remain; finish that step yourself, then run again with from_step. The same review and authority apply to a replayed submit as to one you click yourself: run only a flow whose steps the user's request covers.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "action": {
+     "type": "string",
+     "enum": [
+      "recorded",
+      "save",
+      "list",
+      "show",
+      "run",
+      "delete"
+     ],
+     "description": "recorded: numbered verified steps on tab_id so far. save: store them (or from_step..to_step) as a flow. list: saved flows. show: one flow's steps and variables. run: replay flow_id on tab_id. delete: remove flow_id."
+    },
+    "tab_id": {
+     "type": "string",
+     "description": "recorded, save, run: the tab."
+    },
+    "flow_id": {
+     "type": "string",
+     "description": "show, run, delete: from save or list."
+    },
+    "name": {
+     "type": "string",
+     "description": "save: a short name, e.g. 'Apply on careers.example.com'."
+    },
+    "from_step": {
+     "type": "integer",
+     "minimum": 1,
+     "description": "save: first recorded step to include (default 1). run: step to resume from after finishing a stopped step yourself."
+    },
+    "to_step": {
+     "type": "integer",
+     "minimum": 1,
+     "description": "save: last recorded step to include (default: the latest)."
+    },
+    "variables": {
+     "type": "object",
+     "description": "run: values for this run by variable name, e.g. {\"email\": \"a@b.com\"}. Unnamed variables keep the recorded value; an unknown name is an error."
+    },
+    "start_url": {
+     "type": "string",
+     "description": "run: page to start on, e.g. the next job's apply page. Omit to start where the flow was recorded, or on the current page when the tab is already there."
+    }
+   },
+   "required": [
+    "action"
+   ]
+  }
+ },
+ {
+  "name": "wait_for_bot_wall",
+  "description": "Wait out a bot wall on a tab, then attempt to solve it if it does not clear on its own. Polls the tab while the wall is auto-verifying (e.g. a Cloudflare 'Just a moment\u2026' check that clears itself). If it becomes a user-required challenge it runs the configured solver, and if that fails it returns a structured verdict. Also call it before submitting a form that carries an embedded Turnstile, reCAPTCHA or hCaptcha checkbox: it waits for the widget to pass, presses the checkbox if needed, and reports whether a token was issued (image puzzles are never solved). When the page is required for the user's goal, stop and tell them to solve it (or hand off if you are a browser sub-agent); otherwise continue to the next task.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "tab_id": {
+     "type": "string"
+    },
+    "max_wait_ms": {
+     "type": "integer",
+     "description": "How long to wait for the wall to clear on its own, in milliseconds (default 60000)."
+    },
+    "poll_interval_ms": {
+     "type": "integer",
+     "description": "How often to re-observe the tab while waiting, in milliseconds (default 5000)."
+    },
+    "apply_solver": {
+     "type": "boolean",
+     "description": "Default true. Run the configured bot-wall solver after the wait budget if the wall is still present."
+    }
+   },
+   "required": [
+    "tab_id"
+   ]
+  }
+ }
+]
