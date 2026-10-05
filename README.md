@@ -86,8 +86,10 @@ claude mcp add ascended-browser -- uvx ascended-browser
 codex mcp add ascended-browser -- uvx ascended-browser
 ```
 
-Codex asks for approval before browser actions; approve them when it asks.
-For `codex exec` (which cannot ask, so every call would fail), add
+Whether Codex asks before each browser action follows the permission mode you
+pick in Codex: under **Full access** it just runs them; under **Ask for approval**
+it asks first. In a sandboxed mode, `codex exec` cannot ask and fails every
+call: use Full access, or pre-approve this server's tools by adding
 `default_tools_approval_mode = "approve"` under `[mcp_servers.ascended-browser]`
 in `~/.codex/config.toml`.
 
