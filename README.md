@@ -1,4 +1,18 @@
-# ascended-browser
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://github.com/AceAtDev/ascended-browser/raw/main/docs/assets/ascended-browser-dark.png">
+    <img src="https://github.com/AceAtDev/ascended-browser/raw/main/docs/assets/ascended-browser-light.png" alt="ascended-browser icon" width="96" height="96">
+  </picture>
+</p>
+<h1 align="center">ascended-browser</h1>
+
+<p align="center"><strong>A real browser for your AI agent. One command to add.</strong></p>
+
+<p align="center">
+  <a href="https://pypi.org/project/ascended-browser/"><img src="https://img.shields.io/pypi/v/ascended-browser" alt="PyPI"></a>
+  <a href="https://www.npmjs.com/package/ascended-browser"><img src="https://img.shields.io/npm/v/ascended-browser" alt="npm"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
+</p>
 
 A real browser for AI agents, as an MCP server. Your agent opens pages, reads
 them, and acts on them through **verified actions**: it fills a whole form in
