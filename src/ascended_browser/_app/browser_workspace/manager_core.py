@@ -7191,6 +7191,7 @@ class BrowserWorkspaceManager:
         url: str,
         *,
         navigate: bool,
+        discard_lost_draft: bool = False,
     ) -> dict:
         """Settle/navigate an existing tab behind an LRU operation pin."""
         async with self._pin_tab(record.workspace_id, tab.tab_id):
@@ -7203,7 +7204,9 @@ class BrowserWorkspaceManager:
             navigation_state: dict | None = None
             for attempt in range(2):
                 try:
-                    _, page = await self._get_tab(record, tab.tab_id)
+                    _, page = await self._get_tab(
+                        record, tab.tab_id, discard_lost_draft=discard_lost_draft,
+                    )
                     if navigate:
                         try:
                             self._invalidate_observation(record.workspace_id, tab.tab_id)
@@ -7351,8 +7354,15 @@ class BrowserWorkspaceManager:
         self, owner: str, session_id: str, url: str = "about:blank", *,
         disposition: str = "handoff", actor: str = "parent", actor_id: str = "parent",
         reuse: bool = True, operation_id: str = "", read: Any = False,
+        reuse_same_url: bool = False,
         _capacity_reserved: bool = False, _operation_locked: bool = False,
     ) -> dict:
+        """Open ``url`` in a tab this actor owns.
+
+        ``reuse_same_url`` (with ``reuse=False``) returns an owned tab already
+        at this URL instead of opening a copy, but never navigates a different
+        tab: a batch's tabs stay independent pages.
+        """
         # Opening a page in order to read it is one intent, and it was two
         # calls: nine of a browsing session's opens were followed straight by
         # an extract of the same tab.
@@ -7362,6 +7372,7 @@ class BrowserWorkspaceManager:
             return await self._open(
                 owner, session_id, url, disposition=disposition, actor=actor,
                 actor_id=actor_id, reuse=reuse, operation_id=operation_id,
+                reuse_same_url=reuse_same_url,
                 _capacity_reserved=_capacity_reserved, _operation_locked=_operation_locked,
             )
         finally:
@@ -7372,7 +7383,7 @@ class BrowserWorkspaceManager:
         self, owner: str, session_id: str, url: str = "about:blank", *,
         disposition: str = "handoff", actor: str = "parent", actor_id: str = "parent",
         reuse: bool = True, operation_id: str = "", _capacity_reserved: bool = False,
-        _operation_locked: bool = False,
+        _operation_locked: bool = False, reuse_same_url: bool = False,
     ) -> dict:
         operation_id = str(operation_id or "").strip()
         if operation_id and (len(operation_id) > 128 or not re.fullmatch(r"[A-Za-z0-9_-]+", operation_id)):
@@ -7429,7 +7440,7 @@ class BrowserWorkspaceManager:
                     owner, session_id, url,
                     disposition=disposition, actor=actor, actor_id=actor_id,
                     reuse=reuse, operation_id=operation_id, _capacity_reserved=True,
-                    _operation_locked=_operation_locked,
+                    _operation_locked=_operation_locked, reuse_same_url=reuse_same_url,
                 )
         record = await self.ensure_awake(owner, session_id)
         if actor not in {"parent", "worker", "user"}:
@@ -7446,6 +7457,7 @@ class BrowserWorkspaceManager:
                     result = await self._open_after_effect_barrier(
                         record, url, disposition=disposition, actor=actor,
                         actor_id=actor_id, reuse=reuse, operation_id=operation_id,
+                        reuse_same_url=reuse_same_url,
                     )
                     if actor in {"parent", "worker"}:
                         opened = record.tabs.get(str(result.get("tab_id") or ""))
@@ -7478,6 +7490,7 @@ class BrowserWorkspaceManager:
         actor_id: str,
         reuse: bool,
         operation_id: str = "",
+        reuse_same_url: bool = False,
     ) -> dict:
         """Open/reuse a tab while the owner runtime effect barrier is shared."""
         owner = record.owner
@@ -7487,24 +7500,31 @@ class BrowserWorkspaceManager:
         # continuation. Prefer an exact match, otherwise navigate this actor's
         # most recently used page. `reuse=false` remains the explicit request
         # for a genuinely independent second tab.
-        if reuse:
+        if reuse or reuse_same_url:
             candidates: list[TabRecord] = []
             for existing in record.tabs.values():
                 lease = getattr(existing, "lease", None)
-                if not lease or (lease.actor, lease.actor_id) != (actor, actor_id or actor):
+                if lease and (lease.actor, lease.actor_id) == (actor, actor_id or actor):
+                    candidates.append(existing)
+                # The exact match also covers this actor's lease-less tabs:
+                # sleeping ones and drafts a browser restart lost. Matching on
+                # the lease alone reopened all nine such pages of one session
+                # (722b3c33) as copies beside the originals.
+                if not _same_url(existing.url, url) or not self._actor_owns_tab(existing, actor, actor_id):
                     continue
-                candidates.append(existing)
-                if _same_url(existing.url, url):
-                    try:
-                        return await self._open_existing_tab(
-                            record, existing, url, navigate=False,
-                        )
-                    except RuntimeTransitionRequested:
+                try:
+                    # Asking for this URL again is a restart of that page: a
+                    # draft lost with the old browser is gone either way.
+                    return await self._open_existing_tab(
+                        record, existing, url, navigate=False, discard_lost_draft=True,
+                    )
+                except RuntimeTransitionRequested:
+                    raise
+                except WorkspaceError as exc:
+                    if isinstance(exc, TabLifecycleError) and exc.error_kind == "page_creation_timeout":
                         raise
-                    except WorkspaceError as exc:
-                        if isinstance(exc, TabLifecycleError) and exc.error_kind == "page_creation_timeout":
-                            raise
-                        break  # tab is gone; fall through and open a fresh one
+                    break  # tab is gone; fall through and open a fresh one
+        if reuse:
             selected = self._liveview_selected.get(owner_key(owner))
             preferred = next(
                 (item for item in candidates if selected == (record.workspace_id, item.tab_id)),
@@ -8690,6 +8710,15 @@ class BrowserWorkspaceManager:
         if observed_on and observed_on != _page_key(getattr(page, "url", "")):
             return ""
         visible = [element for element in (snapshot.get("elements") or []) if element.get("visible")]
+        if wanted_type == "file":
+            # A file input is almost always hidden behind a styled button, so
+            # a stale one heals to a file input, hidden or not, and to nothing
+            # else. Matching visible elements only refused Jobvite's labelled,
+            # hidden "file-input-0" on four tabs at once (session 722b3c33).
+            visible = [
+                element for element in (snapshot.get("elements") or [])
+                if str(element.get("type") or "").strip().casefold() == "file"
+            ]
         same_role = lambda element: not wanted_role or str(element.get("role") or "").strip().casefold() == wanted_role
         if wanted_id:
             by_id = [e for e in visible if str(e.get("id") or "").strip() == wanted_id and same_role(e)]
@@ -11166,6 +11195,24 @@ class BrowserWorkspaceManager:
         auth_changed = before_auth != after_auth
         navigated = str(getattr(page, "url", "") or tab.url) != before_url
         submitted = bool(result.get("submitted"))
+        if submit and result.get("filled") and not result.get("message"):
+            # The result said only "filled": a run could not tell a login that
+            # never submitted from one the site refused, and filled again into
+            # the rate limit (session 722b3c33, Ciena). Every fill counts toward
+            # that limit, since a person-style Enter can follow any of them.
+            if not submitted:
+                result["message"] = (
+                    f"Filled the login fields but did not submit them "
+                    f"({result.get('submit_reason') or 'no sign-in control found'}). "
+                    "Press the page's sign-in control with browser_act; calling "
+                    "browser_login again uses another of the 2 fills allowed per 10 minutes."
+                )
+            elif not navigated and not auth_changed:
+                result["message"] = (
+                    "Submitted, but the page and its sign-in state did not change. "
+                    "Look for an error on the page before trying again; another "
+                    "browser_login uses one of the 2 fills allowed per 10 minutes."
+                )
         if auth_changed or submit:
             self._record_domain_disruption(record.workspace_id, domain, "login state changed in another chat")
         # Filling fields alone usually leads directly to another targeted action
@@ -16477,13 +16524,33 @@ class BrowserWorkspaceManager:
             "owner_tab_limit": self._owner_tab_limit,
         }
 
+    @staticmethod
+    def _digest_tab_row(tab: dict) -> dict:
+        """One open tab as the agent needs it to find it again: id, page, state."""
+        row = {
+            "tab_id": tab.get("tab_id"),
+            "title": str(tab.get("title") or "")[:100],
+            "url": str(tab.get("url") or "")[:240],
+            "owner_kind": tab.get("owner_kind"),
+        }
+        if tab.get("owner_kind") == "worker":
+            row["owner_id"] = tab.get("owner_id")
+        if tab.get("restorability") not in (None, "", "restorable_get"):
+            row["restorability"] = tab.get("restorability")
+        for flag in ("dirty", "uncertain"):
+            if tab.get(flag):
+                row[flag] = True
+        if tab.get("user_note"):
+            row["user_note"] = str(tab["user_note"])[:200]
+        return row
+
     def digest(
         self,
         owner: str,
         session_id: str,
         *,
         model: str = "",
-        max_tokens: int = 1200,
+        max_tokens: int = 2000,
         max_chars: int | None = None,
     ) -> str:
         record = self.record(owner, session_id); public = record.public()
@@ -16496,10 +16563,23 @@ class BrowserWorkspaceManager:
             "resumable_count": public["resumable_count"],
             "recovery_warning": public["recovery_warning"],
             "active_workers": active,
-            "tabs": public["tabs"],
+            "tabs": [self._digest_tab_row(tab) for tab in public["tabs"]],
             "completed_workers": completed,
             "artifact_manifest": self.store.artifact_manifest(record.workspace_id),
         }
+        # This is the agent's every-turn record of what is open, after older
+        # tool results have aged out of its history. Whole tab records (~840
+        # chars each) fit four tabs in the budget, so session 722b3c33 saw 4 of
+        # 10 and reopened the rest. Rows say what a tab is; trimming drops the
+        # least recently active first and says how many it dropped.
+        activity = {
+            str(tab.get("tab_id") or ""): float(tab.get("last_active_at") or tab.get("updated_at") or 0)
+            for tab in public["tabs"]
+        }
+        tab_total = len(core["tabs"])
+
+        def least_active(rows: list[dict]) -> list[dict]:
+            return sorted(rows, key=lambda row: activity.get(str(row.get("tab_id") or ""), 0))
 
         def render() -> str:
             return json.dumps(core, ensure_ascii=False, separators=(",", ":"))
@@ -16518,10 +16598,11 @@ class BrowserWorkspaceManager:
             core["completed_workers"].pop()
             text = render()
         while tokens(text) > max_tokens and core["tabs"]:
-            removable = next((index for index, tab in enumerate(core["tabs"]) if tab.get("owner_kind") not in {"user", "worker"}), None)
+            removable = next((tab for tab in least_active(core["tabs"]) if tab.get("owner_kind") not in {"user", "worker"}), None)
             if removable is None:
                 break
-            core["tabs"].pop(removable)
+            core["tabs"].remove(removable)
+            core["tabs_omitted"] = tab_total - len(core["tabs"])
             text = render()
         if tokens(text) > max_tokens:
             core["active_workers"] = [
@@ -16534,10 +16615,12 @@ class BrowserWorkspaceManager:
             ]
             text = render()
         if tokens(text) > max_tokens:
+            newest = {id(tab) for tab in least_active(core["tabs"])[-12:]}
             core["tabs"] = [
-                {key: tab.get(key) for key in ("tab_id", "url", "owner_kind", "owner_id", "restorability", "uncertain")}
-                for tab in core["tabs"][:12]
+                {key: tab[key] for key in ("tab_id", "url", "owner_kind", "owner_id", "uncertain") if key in tab}
+                for tab in core["tabs"] if id(tab) in newest
             ]
+            core["tabs_omitted"] = tab_total - len(core["tabs"])
             text = render()
         if tokens(text) > max_tokens:
             for worker in core["active_workers"]:

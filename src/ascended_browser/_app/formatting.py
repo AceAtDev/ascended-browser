@@ -115,7 +115,8 @@ _BROWSER_MODEL_TOP_LEVEL_KEYS = (
     "scroll", "receipt", "verification_failed", "verification", "blocked", "attention_required",
     "blocker", "user_note", "remaining", "stopped_early", "stop_reason", "skipped_fields",
     "unattempted_fields",
-    "attempted", "filled", "failed", "partial_failure", "uncertain", "reconcile_required",
+    "attempted", "filled", "submitted", "submit_reason", "failed", "partial_failure", "uncertain",
+    "reconcile_required",
     "request_index", "requested_url", "workspace_id", "tab_id", "observation_id",
     "page_revision", "url", "title", "login_available", "reused", "navigated",
     "page_unchanged", "page_note",
@@ -731,13 +732,28 @@ def _project_browser_result(result: Any, *, _depth: int = 0, preserve_text: bool
             if key in result:
                 projected[key] = _browser_value(result[key])
     tabs = result.get("tabs")
-    if isinstance(tabs, list) and not page and not isinstance(rows, list):
+    # A resume's page is the selected tab; its tab list is still the only
+    # place the model learns what else is open (session 722b3c33 resumed with
+    # observe_selected=true and reopened nine open pages as copies).
+    if isinstance(tabs, list) and (not page or result.get("resumed")) and not isinstance(rows, list):
+        tabs = [tab for tab in tabs if isinstance(tab, dict)]
+        if len(tabs) > 20:
+            # Workspace order is oldest first, so a plain head dropped exactly
+            # the pages the agent was working on. Keep the selected tab and the
+            # most recently active ones, in workspace order.
+            selected = str(result.get("selected_tab_id") or "")
+            by_activity = sorted(range(len(tabs)), key=lambda index: (
+                str(tabs[index].get("tab_id") or "") == selected or bool(tabs[index].get("selected")),
+                float(tabs[index].get("last_active_at") or tabs[index].get("updated_at") or 0),
+            ), reverse=True)
+            keep = set(by_activity[:20])
+            projected["tabs_omitted"] = len(tabs) - 20
+            projected["tabs_omitted_note"] = "The least recently active tabs are omitted."
+            tabs = [tab for index, tab in enumerate(tabs) if index in keep]
         projected["tabs"] = [_browser_keys(tab, (
             "tab_id", "url", "title", "status", "navigation_state", "selected", "restorable",
             "restore_status", "owner_kind", "restorability", "dirty", "uncertain",
-        )) for tab in tabs[:20] if isinstance(tab, dict)]
-        if len(tabs) > 20:
-            projected["tabs_omitted"] = len(tabs) - 20
+        )) for tab in tabs]
     relevant_text = result.get("relevant_text") or result.get("visible_text") or result.get("text")
     if result.get("content_blocks") and not preserve_text:
         relevant_text = ""
@@ -779,6 +795,48 @@ def _browser_transport_payload(result: Any) -> Any:
         payload["error"] = result.get("error") or result.get("stderr") or payload.get("error") or "Browser transport failed"
     return payload
 
+_EXTRACT_READING_ARGS = ("instruction", "find", "target_ref", "selector", "schema", "read", "cursor")
+
+_SAVED_RECEIPT_KEYS = (
+    "success", "error", "error_code", "error_kind", "exit_code", "tool_status",
+    "workspace_id", "tab_id", "observation_id", "url", "title",
+    "blocked", "attention_required", "blocker", "diagnostics", "context_note",
+    "evidence_ref", "managed_output_ref", *_BROWSER_SAVED_EVIDENCE_KEYS,
+)
+
+def _saved_extract_receipt(projected: dict, args: dict) -> dict:
+    """A save-only extraction shows its receipt, not the content it saved.
+
+    The file holds the content; repeating it inline doubled the cost. One
+    session made 118 such calls and carried ~760K chars it had already
+    written to disk (722b3c33). browser-use does the same: saved extracts
+    stay in history as their file name.
+    """
+    if (not args.get("save_to") or not projected.get("saved_to")
+            or any(args.get(key) not in (None, "", False, [], {}) for key in _EXTRACT_READING_ARGS)):
+        return projected
+    if "fields" not in projected and str(projected.get("message") or "").startswith("Saved to "):
+        return projected  # already a receipt (history replays the stored one)
+    receipt = {key: projected[key] for key in _SAVED_RECEIPT_KEYS if key in projected}
+    fields = [field for field in projected.get("fields") or [] if isinstance(field, dict)]
+    empty = [
+        str(field.get("label") or field.get("text") or field.get("ref") or "")[:60]
+        for field in fields
+        if field.get("required") and not (
+            field.get("value") or field.get("checked") or field.get("file_names")
+            or field.get("selected_text")
+        )
+    ]
+    summary = f"Saved to {projected['saved_to']} ({projected.get('saved_bytes', 0)} bytes"
+    if fields:
+        summary += f", {len(fields)} controls"
+    if empty:
+        summary += f"; required and empty: {', '.join(empty[:10])}"
+        if len(empty) > 10:
+            summary += f" and {len(empty) - 10} more"
+    receipt["message"] = summary + "). Content not repeated here; read the file if you need it."
+    return receipt
+
 def browser_result_context(tool_name: str, result: Any, arguments: Any = None) -> dict | None:
     """Typed browser context from actual tool identity, never result prose.
 
@@ -816,6 +874,8 @@ def browser_result_context(tool_name: str, result: Any, arguments: Any = None) -
         projected = _project_browser_result(
             _browser_transport_payload(result), preserve_text=kind == "extraction",
         )
+        if name == "browser_extract":
+            projected = _saved_extract_receipt(projected, args)
     except (TypeError, ValueError, RecursionError):
         # A malformed remote result must not kill a run or bypass redaction by
         # falling back to raw JSON. The operation outcome stays unknown unless

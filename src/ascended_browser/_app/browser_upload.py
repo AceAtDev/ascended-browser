@@ -133,12 +133,21 @@ async def _set_input_files_verified(
         before_text = await target.locator("body").inner_text(timeout=min(3000, timeout_ms))
     except Exception:
         before_text = ""
+    # Hold the element itself: a page that replaces its input after reading
+    # the file (Nokia) leaves the selector pointing at a fresh, empty input,
+    # while the original still carries what it was given.
+    handle = locator
+    if hasattr(locator, "element_handle"):
+        try:
+            handle = await locator.element_handle(timeout=min(3000, timeout_ms))
+        except Exception:
+            handle = locator
     # The names the input held at its own change event. Sites that read the
     # files and then clear the input (value = '') left nothing to read back,
     # and three attachments that had landed were reported unverified
     # (2026-10-04: Workday, Jobvite, ChatGPT). Recorded on the input itself.
     try:
-        await locator.evaluate("""el => {
+        await handle.evaluate("""el => {
           el.removeAttribute('data-odysseus-upload-witness');
           el.addEventListener('change', () => el.setAttribute('data-odysseus-upload-witness',
             JSON.stringify(Array.from(el.files || []).map(file => String(file.name || '')))),
@@ -147,61 +156,108 @@ async def _set_input_files_verified(
     except Exception:
         pass
     await locator.set_input_files(clean_paths, timeout=timeout_ms)
-    if not await target.locator(selector).count():
-        # The widget took the file and replaced its input with an attachment
-        # row (Greenhouse). Reading the gone input waited out the whole budget
-        # and reported an uncertain effect. Here the exact input accepted the
-        # file and then its own document showed the name, so that is the
-        # evidence — not a name appearing anywhere while the input remains.
-        for _ in range(10):
-            try:
-                after_text = await target.locator("body").inner_text(timeout=1000)
-            except Exception:
-                after_text = ""
-            shown = [name for name in expected if name in after_text and name not in before_text]
-            if Counter(shown) == Counter(expected):
-                return {**base, "success": True, "verified": True,
-                        "verification_method": "input_replaced_filename_shown",
-                        "visible_filename_matches": shown, "file_selection_verified": True,
-                        "attachment_accepted": True, "submission_observed": False}
-            await asyncio.sleep(0.3)
-        raise UploadError(
-            "upload_unverified",
-            "the file input was replaced after the files were set, and its page did not show the filename",
-            result=base,
-        )
-    observed = await locator.evaluate("el => Array.from(el.files || []).map(file => String(file.name || '')).filter(Boolean)")
-    observed = [str(name) for name in (observed or [])]
+
+    replaced = not await target.locator(selector).count()
+    observed: list[str] = []
+    if not replaced:
+        try:
+            observed = [str(name) for name in (await locator.evaluate(
+                "el => Array.from(el.files || []).map(file => String(file.name || '')).filter(Boolean)"
+            ) or [])]
+        except Exception:
+            observed = []
+    witnessed = await _witnessed_names(handle)
     base["observed_input_filenames"] = observed
-    if Counter(observed) == Counter(expected):
-        return {**base, "success": True, "verified": True, "verification_method": "input_files",
-                "file_selection_verified": True, "attachment_accepted": None, "submission_observed": False}
-    try:
-        witnessed = json.loads(str(await locator.get_attribute("data-odysseus-upload-witness", timeout=1000) or "null"))
-    except Exception:
-        witnessed = None
-    if isinstance(witnessed, list) and Counter(str(name) for name in witnessed) == Counter(expected):
+    if witnessed is not None:
         base["witnessed_input_filenames"] = witnessed
-        return {**base, "success": True, "verified": True, "verification_method": "input_change_event",
+    if replaced:
+        base["input_replaced"] = True
+
+    method = ("input_files" if Counter(observed) == Counter(expected)
+              else "input_change_event" if witnessed is not None and Counter(witnessed) == Counter(expected)
+              else "")
+    if method == "input_files":
+        # The input still holds the files: an ordinary form field, which the
+        # page reads on submit. Nothing else to wait for.
+        return {**base, "success": True, "verified": True, "verification_method": method,
                 "file_selection_verified": True, "attachment_accepted": None, "submission_observed": False}
 
-    try:
-        await target.page.wait_for_timeout(500) if hasattr(target, "page") else await target.wait_for_timeout(500)
-    except Exception:
-        pass
-    try:
-        after_text = await target.locator("body").inner_text(timeout=min(3000, timeout_ms))
-    except Exception:
-        after_text = ""
-    visible_matches = [name for name in expected if name in after_text and name not in before_text]
-    base["visible_filename_matches"] = visible_matches
-    # A newly appearing filename elsewhere on the page does not prove that
-    # this input accepted it. Preserve that clue without claiming attachment.
+    # The page took the file out of its input (cleared or replaced it), so it
+    # is handling the upload itself and shows the name when it is done:
+    # Workday uploads to its server first. Watch for that, bounded, the way a
+    # typed search is given time to answer.
+    shown = await _wait_for_names_shown(target, expected, before_text, timeout_ms=timeout_ms)
+    base["visible_filename_matches"] = shown
+    all_shown = Counter(shown) == Counter(expected)
+    if method == "input_change_event":
+        if replaced and all_shown:
+            # Keep the established name for a swapped input whose page shows
+            # the file (Greenhouse); the change event only adds to it.
+            method = "input_replaced_filename_shown"
+        result = {**base, "success": True, "verified": True, "verification_method": method,
+                  "file_selection_verified": True, "attachment_accepted": True if all_shown else None,
+                  "submission_observed": False}
+        if not all_shown:
+            result["attachment_note"] = (
+                f"the input took {', '.join(expected)}, but the page has not shown the filename yet; "
+                "it may still be uploading. Check the page before uploading again."
+            )
+        return result
+    if replaced and all_shown:
+        # The exact input accepted the file and then its own document showed
+        # the name (Greenhouse swaps the input for an attachment row).
+        return {**base, "success": True, "verified": True,
+                "verification_method": "input_replaced_filename_shown",
+                "file_selection_verified": True, "attachment_accepted": True, "submission_observed": False}
+    # No evidence that this input took the files: say exactly what was seen,
+    # so the caller checks the page instead of uploading a second copy.
+    seen = [
+        "the input was replaced" if replaced else f"the input holds {observed or 'no files'}",
+        "it reported no change" if witnessed is None else f"its change event reported {witnessed}",
+        f"the page shows {shown}" if shown else "the page does not show the filename",
+    ]
     raise UploadError(
         "upload_unverified",
-        "Playwright set the files but exact filename evidence was not observed",
+        "Playwright set the files but exact filename evidence was not observed ("
+        + "; ".join(seen) + ")",
         result=base,
     )
+
+
+async def _witnessed_names(handle: Any) -> list[str] | None:
+    """The names the input reported at its change event, or None if it never fired.
+
+    Read through evaluate: it works on a Locator and on an ElementHandle,
+    attached or not. ``ElementHandle.get_attribute`` takes no timeout, so the
+    old read raised on every chooser upload and Workday's were all reported
+    unverified (session 722b3c33).
+    """
+    try:
+        raw = await handle.evaluate("el => el.getAttribute('data-odysseus-upload-witness')")
+        names = json.loads(str(raw or "null"))
+    except Exception:
+        return None
+    return [str(name) for name in names] if isinstance(names, list) else None
+
+
+async def _wait_for_names_shown(
+    target: Any, expected: list[str], before_text: str, *, timeout_ms: int,
+) -> list[str]:
+    """The expected names the page newly shows, once all appear or time runs out."""
+    from ascended_browser._app.browser_deadline import remaining_seconds
+
+    left = remaining_seconds(default=timeout_ms / 1000) or 0.0
+    stop = asyncio.get_running_loop().time() + max(0.5, min(6.0, left - 1.0))
+    shown: list[str] = []
+    while True:
+        try:
+            text = await target.locator("body").inner_text(timeout=1000)
+        except Exception:
+            text = ""
+        shown = [name for name in expected if name in text and name not in before_text]
+        if Counter(shown) == Counter(expected) or asyncio.get_running_loop().time() >= stop:
+            return shown
+        await asyncio.sleep(0.25)
 
 
 async def choose_files_verified(

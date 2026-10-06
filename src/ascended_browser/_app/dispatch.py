@@ -892,10 +892,13 @@ async def _dispatch_browser_workspace(tool: str, args: Dict, manager, owner: str
                                     disposition=str(args.get("disposition") or "handoff"),
                                     actor=actor, actor_id=actor_id,
                                     # A batch promises independent tabs and
-                                    # atomic rollback. Reusing/navigating an
-                                    # existing tab would make rollback unable
-                                    # to restore its previous page.
+                                    # atomic rollback. Navigating an existing
+                                    # tab would make rollback unable to restore
+                                    # its previous page, but a tab already at
+                                    # this URL is returned as is (reused, so
+                                    # rollback keeps it) instead of copied.
                                     reuse=False,
+                                    reuse_same_url=True,
                                     _capacity_reserved=True,
                                 ),
                                 timeout=60,

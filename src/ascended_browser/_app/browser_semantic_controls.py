@@ -9,7 +9,7 @@ fresh control-local readback.
 from __future__ import annotations
 
 import asyncio
-from collections import Counter
+from collections import Counter, OrderedDict
 from contextvars import ContextVar
 import re
 import time
@@ -43,6 +43,8 @@ class SemanticOptionNotFound(SemanticControlError):
     """
 
     dispatched = False
+    # Typed so the tool result does not fall back to "navigation".
+    error_kind = "option_not_found"
 
     def __init__(
         self,
@@ -262,7 +264,7 @@ async def _plain_fresh_popups(page: Any) -> list[Any]:
 
 
 _OPTION_SELECTOR = (
-    '[role="option"], [role="menuitem"], [role="menuitemradio"], '
+    '[role="option"], [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], '
     '[role="radio"], [role="treeitem"], option, '
     # Role-less items that still state their selection (Ant Design 5's visible
     # options). Only ever read inside a popup scope, never page-wide.
@@ -387,6 +389,50 @@ async def _filter_with_query(locator: Any, text: str, *, timeout_ms: int) -> boo
         return False
 
 
+_SETTLE_AFTER_TYPING = r"""({ids, quiet, cap}) => new Promise(resolve => {
+  const roots = ids.map(id => document.getElementById(id)).filter(Boolean);
+  const root = roots[0] || document.body;
+  const busy = () => roots.some(node => node.getAttribute('aria-busy') === 'true'
+    || node.querySelector('[aria-busy="true"], [role="progressbar"]'));
+  let quietTimer = null, finished = false;
+  const done = () => {
+    if (finished) return;
+    if (busy() && performance.now() < stopAt) { arm(); return; }
+    finished = true;
+    observer.disconnect(); clearTimeout(quietTimer); clearTimeout(capTimer);
+    resolve(true);
+  };
+  const arm = () => { clearTimeout(quietTimer); quietTimer = setTimeout(done, quiet); };
+  const stopAt = performance.now() + cap;
+  const observer = new MutationObserver(arm);
+  observer.observe(root, {subtree: true, childList: true, attributes: true, characterData: true});
+  const capTimer = setTimeout(() => { finished = true; observer.disconnect(); clearTimeout(quietTimer); resolve(false); }, cap);
+  arm();
+})"""
+
+
+async def _settle_after_typing(page: Any, candidate: dict[str, Any], *, timeout_ms: int) -> bool:
+    """Let a typed filter's results replace the list that was showing before.
+
+    A search that runs after a debounce leaves the unfiltered list on screen
+    for a few hundred milliseconds; matching against it found "Job Board" in the
+    old list and clicked a node the search was about to remove. Wait for the
+    popup to stop changing and stop saying it is busy, bounded by the budget.
+    """
+    from ascended_browser._app.browser_deadline import remaining_seconds
+
+    left = remaining_seconds(default=timeout_ms / 1000) or 0.0
+    cap_ms = int(max(0.0, min(2.0, left * 0.3)) * 1000)
+    if cap_ms < 200:
+        return False
+    ids = [part for part in _norm(candidate.get("aria_controls")).split() if part]
+    # True when the popup went quiet and is not busy: the search has answered.
+    return await _safe_call(
+        page, "evaluate", _SETTLE_AFTER_TYPING,
+        {"ids": ids, "quiet": 400, "cap": cap_ms}, default=None, read_only=True,
+    ) is True
+
+
 async def _open_control(locator: Any, *, timeout_ms: int, page: Any = None) -> bool:
     """Open a composite control, without letting the open consume the budget.
 
@@ -454,7 +500,7 @@ def _near_matches(observed: list[str], value: str) -> list[str]:
 
 
 async def _find_option_in_scope(scope: Any, value: str) -> Any | None:
-    for role in ("option", "menuitem", "menuitemradio", "radio", "treeitem", "row"):
+    for role in ("option", "menuitem", "menuitemradio", "menuitemcheckbox", "radio", "treeitem", "row"):
         option = await _option_from_role(scope, role, value)
         if option is not None:
             return option
@@ -490,13 +536,13 @@ async def _find_option(page: Any, candidate: dict[str, Any], value: str) -> tupl
         # this, an option below the mounted window was simply unreachable.
         return None, (scopes[0] if len(scopes) == 1 else None), strategy
 
-    for role in ("option", "menuitem", "menuitemradio", "radio", "treeitem"):
+    for role in ("option", "menuitem", "menuitemradio", "menuitemcheckbox", "radio", "treeitem"):
         option = await _option_from_role(page, role, value)
         if option is not None:
             return option, None, "unique_portal_option"
     try:
         global_options = page.locator(
-            '[role="option"], [role="menuitem"], [role="menuitemradio"], [role="radio"], [role="treeitem"]'
+            '[role="option"], [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="radio"], [role="treeitem"]'
         )
     except Exception:
         return None, None, "none"
@@ -564,6 +610,7 @@ async def _wait_for_option(
     value: str,
     *,
     timeout_ms: int,
+    settled: bool = False,
 ) -> tuple[Any | None, Any | None, str]:
     option, popup, strategy = await _find_option(page, candidate, value)
     if option is not None:
@@ -585,6 +632,12 @@ async def _wait_for_option(
     # popup and say what it offers, and a wait that consumes everything turns a
     # precise "did you mean" into a bare deadline.
     wait_ms = max(1, min(int(timeout_ms * 0.6), 6000))
+    if settled:
+        # The typed search already answered (the popup went quiet and is not
+        # busy), so the option is not on its way. Waiting out 6 s made every
+        # unmatched search cost 8-9 s live (Ashby, react-select, 2026-10-05).
+        # Keep a short window for a late, spinner-less response.
+        wait_ms = min(wait_ms, 1500)
     ids = [
         part for part in str(candidate.get("aria_controls") or "").split()
         if part
@@ -598,7 +651,7 @@ async def _wait_for_option(
           const scopes = ids.map(id => document.getElementById(id)).filter(Boolean);
           const roots = scopes.length ? scopes : [document];
           const found = () => roots.some(root => Array.from(root.querySelectorAll(
-            '[role="option"], [role="menuitem"], [role="menuitemradio"], [role="radio"], [role="treeitem"]'
+            '[role="option"], [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="radio"], [role="treeitem"]'
           )).some(el => el.getClientRects().length && fold(el.textContent) === wanted));
           if (found()) return resolve(true);
           let done = false;
@@ -811,12 +864,31 @@ async def _scope_to_fresh_lists(page: Any, locator: Any, candidate: dict[str, An
     phone field's — were read as its options and clicked as if they were.
     """
     if _fold(await _safe_call(locator, "get_attribute", "aria-expanded", default="")) == "true":
-        return candidate  # already open: its list is legitimately visible
+        owned = await _safe_call(locator, "evaluate", _NAMES_LIVE_POPUP, default=True, read_only=True)
+        if owned is not False:
+            return candidate  # already open with its own popup: legitimately visible
+        # Open, but naming no popup that exists (Ant Design's Cascader points
+        # aria-controls at a missing id). Every list on the page then looked
+        # like its options, and ant.design's site menu was read and clicked.
+        # Close it and let the reopen show which list is its own.
+        await _safe_call(locator, "press", "Escape", timeout=1000)
+        await asyncio.sleep(0.15)
+        if _fold(await _safe_call(locator, "get_attribute", "aria-expanded", default="")) == "true":
+            return candidate
     marked = await _safe_call(page, "evaluate", _MARK_PREOPEN_SCRIPT, default=_FAILED_MARK)
     return candidate if marked is _FAILED_MARK else {**candidate, "_fresh_lists_only": True}
 
 
 _FAILED_MARK = object()
+
+
+# Whether an open control's aria-controls/aria-owns names an element that
+# exists. Returns false only when it names none that does.
+_NAMES_LIVE_POPUP = """el => {
+  const ids = [el.getAttribute('aria-controls'), el.getAttribute('aria-owns')]
+    .join(' ').split(/\\s+/).filter(Boolean);
+  return ids.some(id => document.getElementById(id));
+}"""
 
 
 _FRESH_LIST_SHOWN = """() => Array.from(document.querySelectorAll(
@@ -1122,12 +1194,41 @@ async def _wait_for_value(page: Any, selector: str, candidate: dict[str, Any], v
     raise SemanticControlError(f"option click did not verify: expected {value!r}, observed {last!r}")
 
 
-async def _opened_submenu(page: Any, candidate: dict[str, Any], chosen: str) -> list[str]:
+async def _opened_submenu(
+    page: Any, candidate: dict[str, Any], chosen: str, *, before: list[str] | None = None,
+) -> list[str]:
     """Options a clicked entry revealed in place of committing, if it did that.
 
-    The popup is still open, the entry clicked is no longer among its options
-    and other options are: the entry opened the next level of a menu.
+    With what the popup offered before the click, the answer is the options it
+    offers now that it did not (Skyvern's "incremental elements"): Workday
+    keeps the category as a heading above its children, which the older test,
+    "the clicked entry is gone", read as no submenu. A popup the click closed
+    opened nothing; another list on the page is not its submenu (a phone-code
+    list was once reported as a category's one child).
     """
+    if before is not None:
+        from ascended_browser._app.browser_deadline import remaining_seconds
+
+        # A category loads its children: read once they have arrived and
+        # stopped changing, within what is left of the operation.
+        seen = {_fold(text) for text in before} | {_fold(chosen)}
+        budget = min(1.5, max(0.0, (remaining_seconds(default=1.5) or 0.0) - 0.3))
+        stop = time.monotonic() + budget
+        last: list[str] | None = None
+        while True:
+            after = await _safe_call(page, "evaluate", _MARKED_POPUP_TEXTS, default=None, read_only=True)
+            if after is None:
+                break  # the click closed the popup: nothing opened
+            fresh = [_norm(text) for text in after if _norm(text) and _fold(text) not in seen] \
+                if isinstance(after, list) else None
+            if fresh and fresh == last:
+                return fresh
+            last = fresh
+            if time.monotonic() >= stop:
+                return fresh or []
+            await asyncio.sleep(0.12)
+        if not _norm(candidate.get("aria_controls")):
+            return []
     try:
         scopes, _strategy = await _popup_scopes(page, candidate)
         options, _loading = await _settled_option_texts(scopes)
@@ -1310,6 +1411,256 @@ async def verify_selection_commit(
     }
 
 
+async def _owned_popup_candidate(locator: Any, candidate: dict[str, Any], *, wait_ms: int = 600) -> dict[str, Any]:
+    """The candidate with the popup the opened control names, once it names one.
+
+    ARIA requires an expanded combobox to reference its popup, but a library
+    that mounts the popup lazily sets ``aria-controls`` a few frames after it
+    opens (Ant Design 6). Read once, too early, discovery fell back to "lists
+    that appeared since opening", which on ant.design was the site's navigation
+    menu: its "Design" item was clicked as the version picker's option.
+    """
+    declares_popup = (
+        _fold(await _safe_call(locator, "get_attribute", "role", default="", read_only=True)) == "combobox"
+        or _fold(await _safe_call(locator, "get_attribute", "aria-haspopup", default="", read_only=True))
+        in {"true", "listbox", "menu", "tree", "grid", "dialog"}
+    )
+    deadline = time.monotonic() + max(0, wait_ms) / 1000
+    while True:
+        for name in ("aria-controls", "aria-owns"):
+            live = _norm(await _safe_call(locator, "get_attribute", name, default="", read_only=True))
+            if live:
+                if live == _norm(candidate.get("aria_controls")):
+                    return candidate
+                return {**candidate, "aria_controls": live}
+        if not declares_popup or time.monotonic() >= deadline or _fold(await _safe_call(
+            locator, "get_attribute", "aria-expanded", default="", read_only=True,
+        )) != "true":
+            return candidate
+        await asyncio.sleep(0.05)
+
+
+# What one popup offers, read in one round trip from an option inside it (or
+# from the popup the last commit click marked).
+_POPUP_TEXTS_FROM_OPTION = """el => {
+  const list = el.closest('[role="listbox"], [role="menu"], [role="tree"], [role="grid"], ul, ol') || el.parentElement;
+  if (!list) return null;
+  const out = [];
+  for (const item of list.querySelectorAll('[role="option"], [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="treeitem"], li')) {
+    if (!item.getClientRects().length) continue;
+    const text = String(item.innerText || item.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 80);
+    if (text && !out.includes(text)) out.push(text);
+    if (out.length >= 80) break;
+  }
+  return out;
+}"""
+_MARKED_POPUP_TEXTS = """() => {
+  const list = document.querySelector('[data-odysseus-select-popup]');
+  if (!list || !list.isConnected || !list.getClientRects().length) return null;
+  if (list.getAttribute('aria-busy') === 'true' || list.querySelector('[aria-busy="true"], [role="progressbar"]')) return 'busy';
+  const out = [];
+  for (const item of list.querySelectorAll('[role="option"], [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="treeitem"], li')) {
+    if (!item.getClientRects().length) continue;
+    const text = String(item.innerText || item.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 80);
+    if (text && !out.includes(text)) out.push(text);
+    if (out.length >= 80) break;
+  }
+  return out;
+}"""
+
+
+# A nested menu named in one request: "Job Board > LinkedIn". Only a label that
+# is not itself an option is read as a path.
+_PATH_SEPARATOR = re.compile(r"\s+>\s+")
+
+
+def _shows_path(route: list[str], shown: str) -> bool:
+    """Whether a displayed value names every level of ``route``, in order, ending at its leaf."""
+    text = _fold(shown)
+    position = 0
+    for step in route:
+        found = text.find(_fold(step), position)
+        if found < 0:
+            return False
+        position = found + len(_fold(step))
+    return not text[position:].strip(" />|,")
+
+
+def _option_path(value: str) -> list[str]:
+    parts = [_norm(part) for part in _PATH_SEPARATOR.split(_norm(value))]
+    return parts if len(parts) > 1 and all(parts) else []
+
+
+# Which category of a control opened which options, learned when a category
+# was clicked. A person who has seen "Job Board" open "LinkedIn" goes back
+# through it; the next select of "LinkedIn" waited out its deadline at the top
+# level instead (2026-10-05, Workday "How did you hear about us").
+_CATEGORY_MEMORY: "OrderedDict[tuple[str, str], dict[str, list[str]]]" = OrderedDict()
+_CATEGORY_MEMORY_LIMIT = 64
+
+
+def _category_key(page: Any, candidate: dict[str, Any], hint: str) -> tuple[str, str]:
+    url = str(getattr(page, "url", "") or "")
+    url = url.split("#", 1)[0].split("?", 1)[0]
+    return url, _fold(hint) or _fold(candidate.get("label")) or _fold(candidate.get("ref"))
+
+
+def _remember_submenu(page: Any, candidate: dict[str, Any], hint: str, path: list[str], children: list[str]) -> None:
+    key = _category_key(page, candidate, hint)
+    if not key[1] or not path:
+        return
+    known = _CATEGORY_MEMORY.setdefault(key, {})
+    for child in children:
+        if _fold(child) and _fold(child) not in {_fold(step) for step in path}:
+            known[_fold(child)] = list(path)
+    _CATEGORY_MEMORY.move_to_end(key)
+    while len(_CATEGORY_MEMORY) > _CATEGORY_MEMORY_LIMIT:
+        _CATEGORY_MEMORY.popitem(last=False)
+
+
+def _remembered_route(page: Any, candidate: dict[str, Any], hint: str, value: str) -> list[str]:
+    path = _CATEGORY_MEMORY.get(_category_key(page, candidate, hint), {}).get(_fold(value))
+    return [*path, _norm(value)] if path else []
+
+
+async def _descend_route(
+    page: Any,
+    candidate: dict[str, Any],
+    route: list[str],
+    *,
+    explicit: bool,
+    timeout_ms: int,
+    state: dict[str, Any],
+) -> tuple[Any | None, Any | None, str]:
+    """Open each category of ``route`` in turn and find its last entry.
+
+    Skyvern's sequential selection, without a model in the loop: the caller
+    named the path (or this control showed it earlier), so each level is one
+    exact match and one click. The category clicks change no value. Returns the
+    final option unclicked, so the ordinary commit and readback apply to it.
+    A remembered route that no longer starts at the top returns nothing and
+    lets the ordinary search run.
+    """
+    from ascended_browser._app.browser_deadline import remaining_seconds
+
+    label = _norm(candidate.get("label")) or _norm(candidate.get("ref")) or "this control"
+    opened: list[str] = []
+    strategy = ""
+    for depth, step in enumerate(route):
+        left_ms = int(1000 * (remaining_seconds(default=timeout_ms / 1000) or 0))
+        levels_left = len(route) - depth
+        budget = max(800, min(int(timeout_ms), left_ms // (levels_left + 1)))
+        option, popup, strategy = await _wait_for_option(page, candidate, step, timeout_ms=budget)
+        if option is None:
+            if not explicit and not opened:
+                return None, None, strategy
+            scopes, _scope_strategy = await _popup_scopes(page, candidate)
+            offered, _loading = await _settled_option_texts(scopes, settle_ms=300)
+            await close_composite_popup(page, str(state.get("selector") or ""), candidate)
+            where = f"under {' > '.join(opened)!r}" if opened else "at the top level of"
+            raise SemanticOptionNotFound(
+                f"nothing was selected: {step!r} is not offered {where} {label!r}"
+                + (f"; it offers: {offered[:15]}" if offered else "; no options were visible there")
+                + ". Retry with the path written exactly as those labels read.",
+                observed_options=offered,
+                popup_strategy="submenu" if opened else strategy,
+                for_ref=str(candidate.get("ref") or ""),
+            )
+        if depth == len(route) - 1:
+            return option, popup, strategy
+        await _click_option(option, max(800, budget), page=page)
+        state["category_open"] = True
+        opened.append(step)
+    return None, None, strategy
+
+
+async def _conclude_after_deadline(
+    page: Any,
+    *,
+    state: dict[str, Any],
+    value: str,
+    readback_selector: str | None,
+    reserve_ms: int,
+) -> dict[str, Any]:
+    """Say how a select that ran out of time ended, inside the time kept for it.
+
+    A clicked option is read back once more: Workday's search commits late, and
+    "did not finish within 10s" hid selections that had landed. An unclicked
+    one is a refusal that names what the list offered, never a bare deadline.
+    """
+    candidate = state.get("candidate") or {}
+    selector = str(state.get("selector") or "")
+    label = _norm(candidate.get("label")) or _norm(candidate.get("ref")) or "this control"
+    chosen = _norm(state.get("chosen") or value)
+    field: list[str] = []
+    offered: list[str] = []
+    loading = False
+    from ascended_browser._app.browser_deadline import remaining_seconds
+
+    # Finish inside whatever the caller has left, so its own deadline never
+    # fires over this answer and turns it back into a bare timeout.
+    left = remaining_seconds(default=reserve_ms / 1000)
+    budget = min(reserve_ms / 1000 - 0.15, (left if left is not None else reserve_ms / 1000) - 0.25)
+    try:
+        async with browser_deadline(max(0.2, budget)):
+            if state.get("dispatched"):
+                target = selector
+                if readback_selector and readback_selector != selector and not int(
+                    await _safe_call(page.locator(selector), "count", default=0, read_only=True) or 0
+                ):
+                    target = readback_selector
+                field = await _control_readback(page, target, candidate)
+                if not _value_matches(chosen, field):
+                    await _safe_call(page, "wait_for_timeout", 250)
+                    field = await _control_readback(page, target, candidate)
+                if _value_matches(chosen, field):
+                    await close_composite_popup(page, target, candidate)
+                    return {
+                        "strategy": "aria_option",
+                        "readback": "control_local_readback",
+                        "popup_strategy": str(state.get("popup_strategy") or ""),
+                        "value": chosen,
+                        "observed": field,
+                        "verified": True,
+                        "committed_after_deadline": True,
+                        **({"requested_option": _norm(value)} if _fold(chosen) != _fold(value) else {}),
+                    }
+            else:
+                scopes, _strategy = await _popup_scopes(page, candidate)
+                offered = await _visible_option_texts(scopes, limit=12)
+                loading = await _popup_is_loading(scopes)
+                if state.get("filtered"):
+                    await _safe_call(_first(page.locator(selector)), "fill", "", timeout=500)
+                if state.get("category_open"):
+                    await close_composite_popup(page, selector, candidate)
+    except TimeoutError:
+        pass
+    if state.get("dispatched"):
+        raise SemanticControlError(
+            f"{chosen!r} was clicked on {label!r} but the field did not show it in time"
+            + (f" (it shows {field[:6]})" if field else "")
+            + "; observe the tab to see whether it took before choosing again"
+        )
+    near = _near_matches(offered, value)
+    raise SemanticOptionNotFound(
+        f"nothing was selected: {label!r} did not offer {value!r} in time; "
+        + (
+            f"did you mean {near[0]!r}? Retry with that exact label" if len(near) == 1 else
+            f"these options read like it: {near[:12]}; retry with one of them exactly" if near else
+            f"the list was still loading and showed so far: {offered}; retry, or narrow it with `query`"
+            if loading and offered else
+            "the list was still loading and showed nothing yet; retry, or narrow it with `query`"
+            if loading else
+            f"it offered: {offered}; retry with one of those exactly, or narrow it with `query`"
+            if offered else
+            "no options appeared; the list may still be loading, or this is not the control that lists them"
+        ),
+        observed_options=offered,
+        popup_strategy="deadline",
+        for_ref=str(candidate.get("ref") or ""),
+    )
+
+
 async def list_options_semantic(
     page: Any,
     *,
@@ -1351,11 +1702,7 @@ async def list_options_semantic(
                     locator, timeout_ms=timeout_ms,
                     page=page if candidate.get("_fresh_lists_only") else None,
                 )
-                live_controls = _norm(await _safe_call(
-                    locator, "get_attribute", "aria-controls", default="", read_only=True,
-                ))
-                if live_controls:
-                    candidate = {**candidate, "aria_controls": live_controls}
+                candidate = await _owned_popup_candidate(locator, candidate)
                 if query:
                     await _filter_with_query(locator, query, timeout_ms=timeout_ms)
                 # Suggestions often arrive after the typing that asked for
@@ -1400,14 +1747,26 @@ async def select_option_semantic(
     saw no value at all.
     """
     token = _FIELD_ITEMS_BEFORE.set(None)
+    # The work gets most of the budget; the rest is kept to say how it ended.
+    # Out of time, a select used to fail as a bare deadline, though some had
+    # committed and the rest could name what the list offered (2026-10-05).
+    reserve_ms = min(2000, max(600, int(timeout_ms) // 4))
+    work_ms = max(250, int(timeout_ms) - reserve_ms)
+    state: dict[str, Any] = {
+        "dispatched": False, "chosen": _norm(value), "candidate": candidate, "selector": selector,
+    }
     try:
-        async with browser_deadline(timeout_ms / 1000):
-            return await _select_option_semantic(
-                page, selector=selector, candidate=candidate, value=value, query=query,
-                timeout_ms=timeout_ms, readback_selector=readback_selector,
+        try:
+            async with browser_deadline(work_ms / 1000):
+                return await _select_option_semantic(
+                    page, selector=selector, candidate=candidate, value=value, query=query,
+                    timeout_ms=work_ms, readback_selector=readback_selector, state=state,
+                )
+        except TimeoutError:
+            return await _conclude_after_deadline(
+                page, state=state, value=value, readback_selector=readback_selector,
+                reserve_ms=reserve_ms,
             )
-    except TimeoutError as exc:
-        raise SemanticControlError("selection did not verify before its operation deadline; effect may be uncertain") from exc
     finally:
         _FIELD_ITEMS_BEFORE.reset(token)
         # The marker belongs to this operation only; left behind, it hid a
@@ -1425,8 +1784,10 @@ async def _select_option_semantic(
     query: str | None = None,
     timeout_ms: int = 8000,
     readback_selector: str | None = None,
+    state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Select ``value`` from a native or composite control and prove the commit."""
+    state = state if state is not None else {}
     value = _norm(value)
     if not value:
         raise SemanticControlError("select value is required")
@@ -1438,6 +1799,7 @@ async def _select_option_semantic(
     locator = _first(page.locator(selector))
     tag = await _locator_tag(locator, candidate)
     if tag == "select":
+        state["dispatched"] = True
         try:
             await locator.select_option(label=value, timeout=timeout_ms)
         except Exception:
@@ -1481,27 +1843,56 @@ async def _select_option_semantic(
     # ARIA ownership is often created only while a composite popup is open.
     # Refresh it from the live control so option discovery stays inside the
     # control's actual popup instead of searching unrelated page content.
-    live_controls = _norm(await _safe_call(
-        locator, "get_attribute", "aria-controls", default="", read_only=True,
-    ))
-    if live_controls and live_controls != _norm(candidate.get("aria_controls")):
-        candidate = {**candidate, "aria_controls": live_controls}
+    candidate = await _owned_popup_candidate(locator, candidate)
+    state["candidate"] = candidate
+
+    # A nested menu: the caller wrote the path ("Job Board > LinkedIn"), or this
+    # field showed earlier which category holds the value. Either way the
+    # levels are opened in turn instead of searching the top level for a leaf.
+    path = _option_path(value)
+    route = path or _remembered_route(page, candidate, readback_selector or "", value)
+    if path and (await _find_option(page, candidate, value))[0] is not None:
+        path = route = []  # the whole label is itself an option
 
     text_before = ""
     if editable:
         text_before = _norm(await _safe_call(locator, "input_value", default="", read_only=True))
-        await _filter_with_query(
-            locator, query if query is not None else value, timeout_ms=timeout_ms,
-        )
+        filter_text = query if query is not None else (None if route else value)
+        if filter_text is not None and await _filter_with_query(
+            locator, filter_text, timeout_ms=timeout_ms,
+        ):
+            state["filtered"] = not text_before
+            state["typed"] = filter_text
+            state["list_settled"] = await _settle_after_typing(page, candidate, timeout_ms=timeout_ms)
     timing["filter"] = round((time.monotonic() - started) * 1000, 3)
 
-    option, popup, popup_strategy = await _wait_for_option(page, candidate, value, timeout_ms=timeout_ms)
+    option = popup = None
+    popup_strategy = ""
+    if route:
+        option, popup, popup_strategy = await _descend_route(
+            page, candidate, route, explicit=bool(path), timeout_ms=timeout_ms, state=state,
+        )
+        if option is not None:
+            value = route[-1]
+            state["chosen"] = value
+        elif editable and query is None and not state.get("filtered"):
+            # The remembered category is gone: search for the value as usual.
+            if await _filter_with_query(locator, value, timeout_ms=timeout_ms):
+                state["filtered"] = not text_before
+                state["typed"] = value
+                state["list_settled"] = await _settle_after_typing(page, candidate, timeout_ms=timeout_ms)
+    if option is None:
+        option, popup, popup_strategy = await _wait_for_option(
+            page, candidate, value, timeout_ms=timeout_ms,
+            settled=state.get("list_settled") is True,
+        )
     if option is None and editable and popup_strategy != "ambiguous_popup" and await _safe_call(
         locator, "evaluate", _ENTER_RUNS_SEARCH, default=False, read_only=True,
     ) is True:
         # The field declares that Enter runs its search (enterkeyhint=search)
         # and no form owns it, so Enter cannot submit anything. Search boxes
         # that fetch results only on Enter (Workday's) showed nothing to pick.
+        state["dispatched"] = True
         await _safe_call(locator, "press", "Enter", timeout=1000)
         await asyncio.sleep(0.3)
         if not _norm(await _safe_call(locator, "input_value", default="", read_only=True)) and _fold(value) in {
@@ -1527,10 +1918,22 @@ async def _select_option_semantic(
         # list, which is how a 250-country popup answered with its A's.
         scopes, _scope_strategy = await _popup_scopes(page, candidate)
         observed, still_loading = await _settled_option_texts(scopes)
-    if option is None and editable and not text_before:
-        # Leave the field as found: the filter text is ours, not a value, and
-        # a later read-back must not mistake it for a selection.
+    cleared_note = ""
+    if option is None and editable and state.get("typed") is not None:
+        # The filter text is ours, not a value: clear it and close the list,
+        # whatever the field held before, as Skyvern does with its probe text.
+        # Left behind, the next read-back saw "Qzxwvk" in Ashby's location
+        # field and its popup stayed open over the form.
         await _safe_call(locator, "fill", "", timeout=1000)
+        await close_composite_popup(page, selector, candidate)
+        left = _norm(await _safe_call(locator, "input_value", default="", read_only=True))
+        if text_before and _fold(left) != _fold(text_before):
+            # Typing over a chosen value replaces it (Ashby showed its city in
+            # the input). Say so: the model believed the earlier pick stood.
+            cleared_note = (
+                f" Typing the search cleared the field's earlier value {text_before!r}; "
+                f"select it again if it should stay."
+            )
     if option is None:
         label = _norm(candidate.get("label")) or _norm(candidate.get("ref")) or "this control"
         near = _near_matches(observed, value)
@@ -1550,6 +1953,8 @@ async def _select_option_semantic(
             "filter with `query` so the page fetches less"
             if still_loading else
             f"visible options were: {observed}" if observed
+            else f"typing {state['typed']!r} showed no options, so nothing was selected"
+            if state.get("typed") is not None and state.get("list_settled") is True
             else "no options were visible in the popup — the control may not have opened, "
                  "the list may still be loading, or this may be the wrong control"
         )
@@ -1559,10 +1964,16 @@ async def _select_option_semantic(
             " Choose an exact label from that list, or use `query` to filter "
             "further before selecting." if observed else ""
         )
+        # No option was clicked and the typed search is gone, so the outcome is
+        # known: not uncertain, and safe to retry with a corrected label (the
+        # category refusal below does the same).
+        from ascended_browser._app.browser_execution import dispatch_withdrawn
+
+        dispatch_withdrawn("no option matched; the typed search was cleared")
         raise SemanticOptionNotFound(
             f"missing or ambiguous option: no unique visible exact match for "
             f"{value!r} on {label!r}; "
-            f"{detail}.{next_step} (popup_strategy={popup_strategy})",
+            f"{detail}.{next_step}{cleared_note} (popup_strategy={popup_strategy})",
             observed_options=observed,
             popup_strategy=str(popup_strategy or ""),
             for_ref=str(candidate.get("ref") or ""),
@@ -1579,7 +1990,13 @@ async def _select_option_semantic(
     # to be about the option that is actually being clicked, not the shorthand.
     chosen = _norm(await _safe_call(option, "inner_text", default="", read_only=True)) or value
     await _safe_call(option, "evaluate", _MARK_POPUP_SCRIPT, default=None)
+    # What the popup offered before the click: a category reveals options
+    # that were not there, a commit does not.
+    offered_before = await _safe_call(option, "evaluate", _POPUP_TEXTS_FROM_OPTION, default=None, read_only=True)
     _FIELD_ITEMS_BEFORE.set(Counter(await _field_item_texts(locator)))
+    state["chosen"] = chosen
+    state["popup_strategy"] = popup_strategy
+    state["dispatched"] = True
     try:
         await _click_option(option, click_budget, page=page)
     except SemanticControlError:
@@ -1619,7 +2036,10 @@ async def _select_option_semantic(
             page, selector=selector, candidate=candidate, value=chosen, timeout_ms=timeout_ms,
         )
     except SemanticControlError as failure:
-        submenu = await _opened_submenu(page, candidate, chosen)
+        submenu = await _opened_submenu(
+            page, candidate, chosen,
+            before=offered_before if isinstance(offered_before, list) else None,
+        )
         if submenu:
             # A category, not a choice (Workday's "How did you hear about us?"
             # opens Job Board, Social Media, ... as submenus). Reporting
@@ -1632,28 +2052,49 @@ async def _select_option_semantic(
             from ascended_browser._app.browser_execution import dispatch_withdrawn
 
             dispatch_withdrawn("a category opened its submenu; no option was selected")
+            trail = [*(route[:-1] if route else []), chosen]
+            _remember_submenu(page, candidate, readback_selector or "", trail, submenu)
+            example = " > ".join([*trail, submenu[0]])
             raise SemanticOptionNotFound(
                 f"{chosen!r} on {label!r} is a category: choosing it opened {len(submenu)} more "
-                f"options instead of selecting it: {submenu[:15]}. Select one of those exactly; "
-                f"`query` filters them.",
+                f"options instead of selecting it: {submenu[:15]}. Select one of those by its "
+                f"exact label (this field now opens {chosen!r} itself), or name the path in one "
+                f"call, e.g. {example!r}.",
                 observed_options=submenu,
                 popup_strategy="submenu",
                 for_ref=str(candidate.get("ref") or ""),
             ) from failure
-        if not announced:
+        # A path chosen through its categories is often shown whole
+        # ("Zhejiang / Hangzhou / West Lake"): every level, in order, is the
+        # commit, not a mismatch with the leaf.
+        shown_path = (
+            [item for item in await _control_readback(page, selector, candidate)
+             if _shows_path(route, item)]
+            if route and len(route) > 1 else []
+        )
+        if shown_path:
+            await close_composite_popup(page, selector, candidate)
+            evidence = {
+                "strategy": "control_displays_path",
+                "value": _norm(chosen),
+                "observed": shown_path,
+                "verified": True,
+            }
+        elif not announced:
             raise
-        # Some controls deliberately render no value (react-select with
-        # controlShouldRenderValue disabled, menu-style pickers). Their only
-        # statement of the commit is the live region a screen reader hears —
-        # a real contract, not a guess. Keep it as its own evidence class so a
-        # rendered-value readback is never confused with an announcement.
-        await close_composite_popup(page, selector, candidate)
-        evidence = {
-            "strategy": "aria_live_announcement",
-            "value": _norm(chosen),
-            "observed": [announced],
-            "verified": True,
-        }
+        else:
+            # Some controls deliberately render no value (react-select with
+            # controlShouldRenderValue disabled, menu-style pickers). Their only
+            # statement of the commit is the live region a screen reader hears —
+            # a real contract, not a guess. Keep it as its own evidence class so a
+            # rendered-value readback is never confused with an announcement.
+            await close_composite_popup(page, selector, candidate)
+            evidence = {
+                "strategy": "aria_live_announcement",
+                "value": _norm(chosen),
+                "observed": [announced],
+                "verified": True,
+            }
     return {
         **evidence,
         # How the option was found is not how the commit was proven. Keeping

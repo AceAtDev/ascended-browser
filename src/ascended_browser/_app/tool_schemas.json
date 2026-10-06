@@ -15,7 +15,7 @@
       "type": "string"
      },
      "maxItems": 5,
-     "description": "Batch form only. Leave url empty/omitted. Each URL opens its own tab; a failed URL does not close the others."
+     "description": "Batch form only. Leave url empty/omitted. Each URL opens its own tab, or returns your tab already open at that URL (reused=true); a failed URL does not close the others."
     },
     "atomic": {
      "type": "boolean",

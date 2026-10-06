@@ -1055,8 +1055,12 @@ class PersistentOwnerBackend(BrowserBackend):
                         pass
                 if isinstance(exc, (asyncio.CancelledError, KeyboardInterrupt, SystemExit)):
                     raise
+                # The cause was dropped here, so a failed first launch left no
+                # trace in the log or the result (tool driver, 2026-10-05).
+                log.warning("Managed browser runtime for %s could not start", key, exc_info=True)
                 raise BrowserRuntimeUnavailable(
-                    "The managed browser runtime could not start. "
+                    "The managed browser runtime could not start "
+                    f"({type(exc).__name__}: {str(exc)[:200]}). "
                     "Do not retry browser actions in this turn."
                 ) from exc
 
