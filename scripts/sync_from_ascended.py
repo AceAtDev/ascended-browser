@@ -110,6 +110,8 @@ def settings_defaults(source: Path, generated: str) -> dict:
 TOOLS = [
     "browser_open", "browser_tabs", "browser_observe", "browser_act", "browser_extract",
     "browser_screenshot", "browser_viewport", "browser_evaluate", "browser_flow", "wait_for_bot_wall",
+    # Fills from the package's own vault (runtime/database.py, `ascended-browser login`).
+    "browser_login",
 ]
 # Properties that need the app around them: a chat workspace to save into.
 # Screenshots always come back to the client as a picture.
@@ -128,13 +130,28 @@ DESCRIBE = {
         "A successful set or restore includes a fresh page snapshot; earlier element positions are "
         "stale after a resize, so use the new refs."
     ),
+    "browser_login": (
+        "Sign in on a tab with the user's saved login for its site (saved with `ascended-browser "
+        "login add`). Open the site's sign-in page first; this finds the username, password and "
+        "one-time-code fields and types the saved values into them. You never see the values: they "
+        "read as [redacted] in every result and are masked in screenshots. account_hint picks one "
+        "account when several are saved for the site. submit=true also presses the form's sign-in "
+        "button. After submission, navigation, or an authentication change, the result includes the "
+        "resulting `page` snapshot; use it directly instead of immediately calling browser_observe. "
+        "With no saved login for the site, ask the user to run `ascended-browser login add <site>`, "
+        "or `ascended-browser signin <url>` to sign in by hand."
+    ),
 }
 # Parameter descriptions that speak about the app.
 PARAM_DESCRIBE = {"browser_viewport": {
     "preset": "set only: phone 390x844, tablet 768x1024, desktop 1365x768 (CSS pixels).",
+}, "browser_login": {
+    "tab_id": "The tab showing the site's sign-in page.",
+    "account_hint": "The saved account's name, when the site has more than one.",
+    "submit": "Also press the sign-in button after filling (default false: fill only).",
 }}
 # Nothing an agent reads may promise what only the app has; the sync stops if it does.
-APP_WORDING = ("live view", "live-view", "browser_login", "Ascended app")
+APP_WORDING = ("live view", "live-view", "Ascended app")
 # Wording that names a dropped property.
 # Sentences about a dropped property, removed after REWORD (the calling agent
 # is itself a model, so schema extraction by a second model is left out).
@@ -151,7 +168,7 @@ REWORD = {"browser_extract": [
     ("; matrix captures presets (and schemes) into one labelled grid", ""),
 ]}
 # Sentences that send the model to tools an MCP client does not have.
-APP_ONLY = ("present_artifact", "ask_user", "browser_login", "bundled browser-use skill",
+APP_ONLY = ("present_artifact", "ask_user", "bundled browser-use skill",
             "workspace file", "spawn_agent", "trigger_research", "deliverables/")
 
 

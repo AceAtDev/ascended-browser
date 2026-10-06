@@ -1,7 +1,7 @@
 [
  {
   "name": "browser_open",
-  "description": "Wake the workspace and open or navigate your current browser tab. Pass either url or a bounded urls list (maximum 5). To check several sites, open them in ONE call with urls: it opens independent tabs in the same authenticated browser context and returns one compact, ordered result per URL; that `results` list is the authoritative source for each tab_id. A URL that fails (DNS, block) is reported on its own row and the other tabs stay open. Batch results omit page bodies: next, call browser_extract/observe for every returned tab_id together in one response, since calls on different tabs run in parallel. Returns once the page has settled. By default it reuses your current actor-owned tab, including across a resumed task; set reuse=false only for a genuinely independent second tab (the result carries reused=true when reused). The single-URL result includes a settled `page` snapshot; use it directly instead of immediately calling browser_observe. Only a returned attention_required=true represents an explicit handoff. A blocked=true page result does not suspend the run: decide whether to take another route or tell the user plainly what could not be completed. For broad public discovery use web_search rather than navigating this tab to a search engine; browser search remains valid when explicitly requested or interaction/personalization matters.",
+  "description": "Wake the workspace and open or navigate your current browser tab. Pass either url or a bounded urls list (maximum 5). To check several sites, open them in ONE call with urls: it opens independent tabs in the same authenticated browser context and returns one compact, ordered result per URL; that `results` list is the authoritative source for each tab_id. A URL that fails (DNS, block) is reported on its own row and the other tabs stay open. Batch results omit page bodies: next, call browser_extract/observe for every returned tab_id together in one response, since calls on different tabs run in parallel. Returns once the page has settled. By default it reuses your current actor-owned tab, including across a resumed task; set reuse=false only for a genuinely independent second tab (the result carries reused=true when reused). The single-URL result includes a settled `page` snapshot; use it directly instead of immediately calling browser_observe. A page snapshot with `login_available` names matching saved vault accounts and directs you to browser_login. A page snapshot with auth_state.state=login_form_visible is not a fatal blocker: follow the user's request and call browser_login when appropriate. Only a returned attention_required=true represents an explicit handoff. A blocked=true page result does not suspend the run: decide whether to take another route or tell the user plainly what could not be completed. For broad public discovery use web_search rather than navigating this tab to a search engine; browser search remains valid when explicitly requested or interaction/personalization matters.",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -835,6 +835,30 @@
     "apply_solver": {
      "type": "boolean",
      "description": "Default true. Run the configured bot-wall solver after the wait budget if the wall is still present."
+    }
+   },
+   "required": [
+    "tab_id"
+   ]
+  }
+ },
+ {
+  "name": "browser_login",
+  "description": "Sign in on a tab with the user's saved login for its site (saved with `ascended-browser login add`). Open the site's sign-in page first; this finds the username, password and one-time-code fields and types the saved values into them. You never see the values: they read as [redacted] in every result and are masked in screenshots. account_hint picks one account when several are saved for the site. submit=true also presses the form's sign-in button. After submission, navigation, or an authentication change, the result includes the resulting `page` snapshot; use it directly instead of immediately calling browser_observe. With no saved login for the site, ask the user to run `ascended-browser login add <site>`, or `ascended-browser signin <url>` to sign in by hand.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "tab_id": {
+     "type": "string",
+     "description": "The tab showing the site's sign-in page."
+    },
+    "account_hint": {
+     "type": "string",
+     "description": "The saved account's name, when the site has more than one."
+    },
+    "submit": {
+     "type": "boolean",
+     "description": "Also press the sign-in button after filling (default false: fill only)."
     }
    },
    "required": [

@@ -1,15 +1,19 @@
-"""The login vault table, empty here: saving logins needs the Ascended app.
+"""The login vault table: ``logins.db`` in the data directory, readable only by you.
 
-The browser asks it on every page load whether a saved login matches the
-site; a real (SQLite) table makes that answer "none" without special cases.
+``ascended-browser login add`` writes it; ``browser_login`` reads it to fill a
+sign-in form, and the server scrubs every value in it from what the agent is
+shown (see ``ascended_browser.logins``). The browser also asks it on every page
+load whether a saved login matches the site.
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, Column, DateTime, String, Text, create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
-from sqlalchemy.pool import StaticPool
+
+from .paths import data_dir
 
 
 def _now():
@@ -36,6 +40,22 @@ class BrowserLoginCredential(Base):
     updated_at = Column(DateTime, default=_now, onupdate=_now)
 
 
-_engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+def vault_path():
+    return data_dir() / "logins.db"
+
+
+def _create_private(path) -> None:
+    """Create the file owner-only before SQLite opens it (its journal copies the mode)."""
+    if not path.exists():
+        os.close(os.open(path, os.O_CREAT | os.O_WRONLY, 0o600))
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+
+
+_path = vault_path()
+_create_private(_path)
+_engine = create_engine(f"sqlite:///{_path}", connect_args={"check_same_thread": False, "timeout": 15})
 Base.metadata.create_all(_engine)
 SessionLocal = sessionmaker(bind=_engine)

@@ -34,8 +34,10 @@ INSTRUCTIONS = (
     "scroll). Results say what changed, so you rarely need browser_observe after an action. "
     "Use browser_extract to read content, find a phrase, or list every match of a CSS selector, "
     "browser_viewport and browser_screenshot for responsive and visual checks, and "
-    "browser_extract read=console|network|inspect to debug a page you are building. For public "
-    "pages you only need to read, a fetch tool is faster than the browser."
+    "browser_extract read=console|network|inspect to debug a page you are building. On a sign-in "
+    "form, browser_login fills the user's saved login for that site (you never see its values; "
+    "they read as [redacted]); without one, ask the user to save it with `ascended-browser login "
+    "add`. For public pages you only need to read, a fetch tool is faster than the browser."
 )
 
 
@@ -107,13 +109,15 @@ def _content(name: str, args: dict, result: dict, session: str) -> tuple[list, b
     from mcp import types
 
     from ._app.formatting import browser_result_archive, format_tool_result
+    from .logins import scrub
     from .runtime.evidence import store_text
 
-    text = format_tool_result(name, result, arguments=args)
+    # No saved login value reaches the agent, whichever tool read it.
+    text = scrub(format_tool_result(name, result, arguments=args))
     # An evidence page is already bounded (12k characters at most) and is itself
     # the way to read a clipped result, so it is never clipped again.
     if len(text) > CLIP_CHARS and result.get("source") != "browser_evidence":
-        full = browser_result_archive(name, result, args) or text
+        full = scrub(browser_result_archive(name, result, args) or text)
         reference = store_text(session, full)
         text = (
             text[:CLIP_CHARS]
@@ -146,9 +150,11 @@ async def serve(protocol_out: io.TextIOWrapper) -> None:
                          log_geometry, refs_in_result)
 
     from .browser_build import prefetch
+    from .logins import install as install_logins
     from .profiles import NOTICE, claim
 
     prefetch()  # first run: start the browser download now, not at the first tool call
+    install_logins()
     window = BrowserWindow()
 
     class Manager(BrowserWorkspaceManager):
