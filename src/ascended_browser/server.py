@@ -109,7 +109,7 @@ def _content(name: str, args: dict, result: dict, session: str) -> tuple[list, b
     from mcp import types
 
     from ._app.formatting import browser_result_archive, format_tool_result
-    from .logins import scrub
+    from .logins import scrub, widen_masks
     from .runtime.evidence import store_text
 
     # No saved login value reaches the agent, whichever tool read it.
@@ -127,8 +127,8 @@ def _content(name: str, args: dict, result: dict, session: str) -> tuple[list, b
     content: list[Any] = [types.TextContent(type="text", text=text)]
     for image in result.get("images") or []:
         if isinstance(image, dict) and image.get("data"):
-            content.append(types.ImageContent(type="image", data=image["data"],
-                                              mimeType=image.get("mimeType") or "image/png"))
+            kind = image.get("mimeType") or "image/png"
+            content.append(types.ImageContent(type="image", data=widen_masks(image["data"], kind), mimeType=kind))
     failed = result.get("exit_code") not in (None, 0) or result.get("success") is False
     return content, bool(failed)
 
@@ -146,8 +146,8 @@ async def serve(protocol_out: io.TextIOWrapper) -> None:
     from .runtime import agent_tools
     from .runtime.paths import data_dir
 
-    from .window import (BrowserWindow, apply_frame_size, demo_log, install_demo_events, log_boxes, log_find,
-                         log_geometry, refs_in_result)
+    from .window import (BrowserWindow, apply_frame_size, demo_image, demo_log, install_demo_events, log_boxes,
+                         log_find, log_geometry, refs_in_result)
 
     from .browser_build import prefetch
     from .logins import install as install_logins
@@ -214,7 +214,9 @@ async def serve(protocol_out: io.TextIOWrapper) -> None:
                             "audit" if audit else "query", refs_in_result(text, audit))
         if name == "browser_extract" and not failed and isinstance(args.get("find"), str):
             await log_find(manager, OWNER, session, str(result.get("tab_id") or args.get("tab_id") or ""), args["find"])
-        demo_log({"type": "tool", "phase": "end", "tool": name, "ok": not failed, "text": text[:8000]})
+        image = next((c.data for c in content if getattr(c, "type", "") == "image"), "")
+        demo_log({"type": "tool", "phase": "end", "tool": name, "ok": not failed, "text": text[:8000],
+                  **({"image": shot} if (shot := demo_image(image)) else {})})
         return types.CallToolResult(content=content, isError=failed)
 
     stdin = anyio.wrap_file(io.TextIOWrapper(sys.stdin.buffer, encoding="utf-8"))

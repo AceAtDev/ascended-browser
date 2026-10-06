@@ -47,6 +47,10 @@ The full unedited screen recordings are in [`videos/unedited/`](videos/unedited/
 
 **Real forms.** booking.com: popup, destination autocomplete, date picker, search, sort by price.
 
+<a href="https://github.com/AceAtDev/ascended-browser/blob/main/videos/login.mp4"><img src="https://github.com/AceAtDev/ascended-browser/raw/main/videos/login.gif" alt="Saved logins. A login is saved once with the CLI; the agent signs in with browser_login; your screen shows the account while every result and screenshot the agent gets has it redacted." width="760"></a>
+
+**Saved logins.** You save a login once; the agent signs in with it and never sees it. Built from a real run (`demo/login_demo.py`, then `demo/login_explainer.py`): the CLI's output, the screen, and the exact text and pictures the agent got back.
+
 Click any clip for the full-quality MP4.
 
 ## Install
@@ -126,18 +130,74 @@ command `uvx` and args `["ascended-browser"]`, or command `npx` and args
 | `browser_evaluate` | Read-only JavaScript, policy-checked |
 | `browser_tabs` | List, close or sleep tabs |
 | `browser_flow` | Record a task once, replay it on the next page with new values |
+| `browser_login` | Sign in with a login you saved (see [Saved logins](#saved-logins)); the agent never sees its values |
 | `wait_for_bot_wall` | Wait out a "checking your browser" page; press a Turnstile/reCAPTCHA checkbox if one blocks a form |
 
 Long results come back clipped, with an `evidence_ref` that
 `browser_extract` pages through, so a huge page cannot flood the agent's
 context.
 
+## Saved logins
+
+Save a login once and the agent can sign in with it, without ever seeing it.
+
+```bash
+uvx ascended-browser login add github.com --username you@example.com   # prompts for the password
+uvx ascended-browser login add accounts.example.com --name Work --totp  # also a TOTP secret (or otpauth:// URI)
+uvx ascended-browser login list                                         # names, usernames, sites; never passwords
+uvx ascended-browser login edit Work --password                         # change only what you pass
+uvx ascended-browser login remove Work
+```
+
+The site is the host of the **sign-in page** (`accounts.example.com`, not
+`example.com`, when they differ); pass several for one account on several
+hosts. Passwords and TOTP secrets come from a hidden prompt, or from stdin
+with `--password-stdin`, never from the command line, where they would end up
+in shell history and the process list.
+
+Then ask your agent to sign in. `browser_open` tells it a saved login exists
+for the page, and `browser_login` finds the username, password and
+one-time-code fields and types the values in (`submit: true` also presses
+the button). What the agent gets:
+
+- **Every tool result is scrubbed** of every saved username, password and TOTP
+  secret, also URL-encoded, JSON- or HTML-escaped: `browser_observe`,
+  `browser_evaluate` (reading `input.value` returns `[redacted]`),
+  `browser_extract` (page text, field values, network bodies) and action
+  results. A page that prints "Signed in as you@example.com" reads as
+  "Signed in as [redacted]".
+- **Every screenshot is masked** before it reaches the agent: password, card
+  and one-time-code fields, username and email fields, and any saved value
+  shown as page text.
+
+For sites a saved login cannot fill (single sign-on, passkeys, a CAPTCHA, a
+code sent by email), sign in by hand once:
+
+```bash
+uvx ascended-browser signin https://example.com/login   # opens the browser; sign in, then press Enter
+```
+
+The cookies stay in the browser profile that every later agent session
+starts from. Close running agent sessions first, so the sign-in lands in the
+saved profile rather than a session's copy.
+
+The vault is `logins.db` in the data directory, readable only by your user,
+and not encrypted (like `gh` or `aws` credentials files). The scrubbing and
+masking cover what the **browser tools** return. An agent that also has a
+shell or file tools (Claude Code, Codex) runs as you and can read any file you
+can, this one included. Deny its file tools the path (in Claude Code,
+`"deny": ["Read(~/.local/share/ascended/**)"]` under `permissions` in
+`~/.claude/settings.json`) and keep shell commands on approval; an agent free
+to run any command can still reach the file. Values shorter than 4 characters
+are not scrubbed, and a value the page changes (the last four digits of a
+card, say) is not matched.
+
 ## Settings
 
 | Variable | Default | |
 |---|---|---|
 | `ASCENDED_BROWSER_WINDOW` | hidden | `show` opens a visible window |
-| `ASCENDED_DATA_DIR` | `~/.local/share/ascended/browser` | Browser profile (sign-ins persist), session files |
+| `ASCENDED_DATA_DIR` | `~/.local/share/ascended/browser` | Browser profile (sign-ins persist), saved logins (`logins.db`), session files |
 | `ASCENDED_RESULT_MAX_CHARS` | `24000` | Longer results are clipped with an `evidence_ref` |
 | `ASCENDED_SETTING_<KEY>` | | Any browser setting, e.g. `ASCENDED_SETTING_BROWSER_WORKSPACE_OBSERVE_FORMAT=outline` |
 | `ASCENDED_LOG_LEVEL` | `WARNING` | Logs go to stderr |
@@ -150,11 +210,10 @@ context.
   and Windows the window keeps its launch size; emulation (dark mode, reduced
   motion, forced colors, offline) works everywhere. Screenshot grids across
   several sizes in one call are not included.
-- **Model-backed features of the Ascended app are not in this package:**
-  schema-shaped extraction (a model reads the page into your JSON shape) and
-  saved logins (`browser_login`). Their tools and parameters are not exposed,
-  so an agent never sees them. Everything listed under Tools runs without a
-  model.
+- **Schema-shaped extraction** (a model reads the page into your JSON shape)
+  is an Ascended app feature that needs a model, so it is not in this package
+  and its parameters are not exposed. Everything listed under Tools runs
+  without a model.
 - One server process is one browser session: tabs and refs last until your
   client disconnects; the profile (cookies, sign-ins) lasts across sessions.
   Several sessions can run at once: the first one uses the saved profile, and
@@ -172,7 +231,12 @@ stand-ins). The sync refuses any app import it cannot map.
 
 Tested with Ascended's own stress harnesses run against this package
 (`tests/stress/`), a client-side MCP smoke test (`tests/smoke_mcp.py`), and
-live-website tasks given to real agents (`tests/agents/`).
+live-website tasks given to real agents (`tests/agents/`). Saved logins have
+their own: `tests/test_logins.py` (the vault CLI and the scrubber),
+`tests/login_redaction_mcp.py` (a real client signs in on a page that echoes
+the login into its text, DOM and network, and no tool may show it; with
+tesseract installed it also reads the screenshots) and
+`tests/signin_persists.py`.
 
 What has been verified so far: Linux (Python 3.11, 3.12 and 3.14), with Claude
 Code and Codex (0.160) on live-site tasks, opencode on a navigation task, and

@@ -100,6 +100,7 @@ class Beat:
     text: str = ""
     boxes: list = field(default_factory=list)
     repeat: bool = False    # the same read as an earlier step: it gets less screen time
+    image: str = ""         # the picture the tool returned (browser_screenshot), as the agent got it
 
     @property
     def read(self) -> str:
@@ -130,6 +131,7 @@ def load_events(path: Path, t0: float):
             if beat:
                 running.remove(beat)
                 beat.end, beat.ok, beat.text = t, bool(event.get("ok")), event.get("text", "")
+                beat.image = event.get("image", "")
         elif kind == "pointer":
             pointers.append({**event, "t": t})
         elif kind == "geometry":
@@ -999,7 +1001,8 @@ def cut(raw: Path, events: Path, t0: float, answer: str, out: Path, speed: float
                 continue
             oe = timeline.output(beat.end)
             if not any(t["beat"] is beat for t in thumbs) and o >= oe:
-                thumbs.append({"beat": beat, "img": content.convert("RGB").copy(), "o": oe, "rect": rect,
+                thumbs.append({"beat": beat, "img": returned_picture(beat) or content.convert("RGB").copy(),
+                               "o": oe, "rect": rect,
                                "compare": bool(beat.args.get("compare_with")), "index": len(thumbs)})
             if oe <= o <= oe + 0.25:
                 flash = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -1061,6 +1064,14 @@ def cut(raw: Path, events: Path, t0: float, answer: str, out: Path, speed: float
     encoder.stdin.close()
     encoder.wait()
     decoder.kill()
+
+
+def returned_picture(beat: Beat) -> Image.Image | None:
+    """The picture the tool returned (masks and all); older logs only have the screen."""
+    try:
+        return Image.open(beat.image).convert("RGB") if beat.image else None
+    except OSError:
+        return None
 
 
 def draw_thumb(frame: Image.Image, thumb: dict, thumbs: list[dict], o: float, device: bool) -> None:

@@ -56,6 +56,8 @@ def main() -> None:
     parser.add_argument("--recompose", action="store_true")
     parser.add_argument("--speed", type=float, default=2.0, help="playback speed while tools run")
     parser.add_argument("--pace", type=float, default=1.0, help=">1 gives each step and its visual more time")
+    parser.add_argument("--setup", default="",
+                        help="shell command run before the agent with its environment (e.g. saving a demo login)")
     args = parser.parse_args()
     raw_dir = args.out / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
@@ -78,13 +80,19 @@ def main() -> None:
             "ASCENDED_BROWSER_WINDOW_SIZE": f"{W}x{H}", "ASCENDED_DEMO_EVENTS": str(events),
             "ASCENDED_DATA_DIR": str(work / "data"),
         }
+        setup_output = ""
         try:
+            if args.setup:
+                setup_output = subprocess.run(args.setup, shell=True, check=True, capture_output=True, text=True,
+                                              env={**os.environ, **env}).stdout
+                print(setup_output, end="")
             answer = run_agent(args.task, env, work, args.model)
             time.sleep(1.0)
         finally:
             ffmpeg.communicate(b"q", timeout=60)
             xvfb.terminate()
-        meta.write_text(json.dumps({"task": args.task, "t0": t0, "answer": answer, "x_pointer": False}, indent=1))
+        meta.write_text(json.dumps({"task": args.task, "t0": t0, "answer": answer, "x_pointer": False,
+                                    "setup": args.setup, "setup_output": setup_output}, indent=1))
     saved = json.loads(meta.read_text())
     out = args.out / f"{args.name}.mp4"
     cut(raw, events, saved["t0"], saved["answer"], out, speed=args.speed, pace=args.pace)

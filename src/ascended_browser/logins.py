@@ -178,6 +178,44 @@ def install() -> None:
 
 
 # ---------------------------------------------------------------- screenshots
+# How far every mask grows before a picture leaves the server. A mask covers an
+# element's layout box exactly, and the last glyph of bold or italic text
+# overhangs that box by a pixel or two; text flush against its container's edge
+# then shows a readable sliver.
+MASK_GROW_PX = 4
+
+
+def widen_masks(data: str, mime_type: str = "image/png") -> str:
+    """A base64 picture with every mask-coloured region grown by MASK_GROW_PX."""
+    import base64
+    import io
+
+    from PIL import Image, ImageChops, ImageColor, ImageFilter
+
+    from ._app.browser_capture import MASK_COLOR
+
+    try:
+        image = Image.open(io.BytesIO(base64.b64decode(data))).convert("RGB")
+    except Exception:
+        return data
+    color = ImageColor.getrgb(MASK_COLOR)[:3]
+    r, g, b = image.split()
+    # Within a JPEG's error of the mask colour, so a full-page JPEG is covered too.
+    near = [channel.point(lambda v, c=c: 255 if abs(v - c) <= 48 else 0)
+            for channel, c in zip((r, g, b), color)]
+    mask = ImageChops.multiply(ImageChops.multiply(near[0], near[1]), near[2])
+    if not mask.getbbox():
+        return data
+    mask = mask.filter(ImageFilter.MaxFilter(2 * MASK_GROW_PX + 1))
+    image.paste(color, (0, 0), mask)
+    out = io.BytesIO()
+    if "jpeg" in mime_type:
+        image.save(out, "JPEG", quality=80)
+    else:
+        image.save(out, "PNG", optimize=True)
+    return base64.b64encode(out.getvalue()).decode()
+
+
 def install_capture_masks() -> None:
     """Extend the browser's screenshot masks with usernames (see module docstring).
 

@@ -17,6 +17,7 @@ import re
 import shutil
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 log = logging.getLogger("ascended_browser")
@@ -142,6 +143,27 @@ def demo_log(event: dict) -> None:
             stream.write(json.dumps({"t": time.time(), **event}) + "\n")
     except OSError:
         pass
+
+
+def demo_image(data: str) -> str:
+    """Save a picture a tool returned beside the demo log; its path, or "" when not recording.
+
+    The recorder prints this, not the screen capture, so a demo shows the
+    picture the agent got (masks included).
+    """
+    path = os.environ.get("ASCENDED_DEMO_EVENTS", "").strip()
+    if not path or not data:
+        return ""
+    import base64
+
+    folder = Path(path + ".images")
+    try:
+        folder.mkdir(exist_ok=True)
+        target = folder / f"{time.time_ns()}.png"
+        target.write_bytes(base64.b64decode(data))
+        return str(target)
+    except (OSError, ValueError):
+        return ""
 
 
 def install_demo_events(window: "BrowserWindow", manager: Any) -> None:

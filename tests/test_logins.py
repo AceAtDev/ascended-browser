@@ -122,3 +122,26 @@ def test_login_state_stays_in_the_data_directory(tmp_path: Path) -> None:
     out = py(tmp_path, "from ascended_browser import logins; from ascended_browser._app import browser_login_broker as b; "
                        "logins.install(); print(b.RATE_LIMIT_FILE)")
     assert Path(out.strip()).is_relative_to(tmp_path)
+
+
+def test_masks_grow_past_glyph_overhang() -> None:
+    import base64
+    import io
+
+    from PIL import Image
+
+    from ascended_browser.logins import MASK_GROW_PX, widen_masks
+
+    image = Image.new("RGB", (40, 20), "white")
+    image.paste((255, 0, 255), (10, 5, 20, 15))   # a mask
+    image.putpixel((21, 10), (0, 0, 0))            # a glyph sliver just past its edge
+    buffer = io.BytesIO()
+    image.save(buffer, "PNG")
+    out = Image.open(io.BytesIO(base64.b64decode(widen_masks(base64.b64encode(buffer.getvalue()).decode()))))
+    assert out.getpixel((21, 10)) == (255, 0, 255)
+    assert out.getpixel((20 + MASK_GROW_PX - 1, 10)) == (255, 0, 255)
+    assert out.getpixel((30, 10)) == (255, 255, 255), "masks grow by a few pixels, not more"
+    blank = io.BytesIO()
+    Image.new("RGB", (8, 8), "white").save(blank, "PNG")
+    untouched = base64.b64encode(blank.getvalue()).decode()
+    assert widen_masks(untouched) == untouched, "a picture with no mask is passed through as it is"
