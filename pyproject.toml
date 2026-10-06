@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ascended-browser"
-version = "0.1.3"
+version = "0.1.4"
 description = "A real, hardened browser for AI agents: verified actions, page reading, dev tools. An MCP server."
 readme = "README.md"
 license = "MIT"

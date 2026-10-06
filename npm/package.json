@@ -1,6 +1,6 @@
 {
   "name": "ascended-browser",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "A real, hardened browser for AI agents (MCP server): verified actions, page reading, dev tools. Runs the ascended-browser Python package.",
   "license": "MIT",
   "author": "Mohamed Elshoubky",
