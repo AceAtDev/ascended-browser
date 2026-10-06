@@ -2,7 +2,8 @@
 
 One server process is one browser session: its tabs and element refs live
 until the client disconnects. The browser profile lives in the data directory,
-so a site you sign in to stays signed in across sessions.
+so a site you sign in to stays signed in across sessions; a server started while
+another one has it open runs on a copy (see profiles.py).
 """
 from __future__ import annotations
 
@@ -145,6 +146,7 @@ async def serve(protocol_out: io.TextIOWrapper) -> None:
                          log_geometry, refs_in_result)
 
     from .browser_build import prefetch
+    from .profiles import NOTICE, claim
 
     prefetch()  # first run: start the browser download now, not at the first tool call
     window = BrowserWindow()
@@ -154,7 +156,9 @@ async def serve(protocol_out: io.TextIOWrapper) -> None:
             return window.headless
 
     root = data_dir()
-    manager = Manager(store=WorkspaceStore(str(root / "workspace")),
+    profile = claim(root)
+    notice = [] if profile.primary else [NOTICE]
+    manager = Manager(store=WorkspaceStore(str(profile.root)),
                       auth_store=AuthStateStore(str(root / "auth")))
     manager.auth_store.mark_migrated(OWNER, {"migrated": True})
     window.install(manager)
@@ -195,6 +199,8 @@ async def serve(protocol_out: io.TextIOWrapper) -> None:
         if not isinstance(result, dict):
             result = {"error": f"{name} returned no result", "exit_code": 1}
         content, failed = _content(name, args, result, session)
+        if notice and name == "browser_open" and not failed:  # said once, with the first page this session opens
+            content.insert(0, types.TextContent(type="text", text=notice.pop()))
         text = "\n".join(getattr(c, "text", "") for c in content)
         if name == "browser_extract" and not failed and (args.get("read") == "audit" or args.get("selector")):
             audit = args.get("read") == "audit"
@@ -216,6 +222,7 @@ async def serve(protocol_out: io.TextIOWrapper) -> None:
         except Exception:
             log.debug("browser close at exit failed", exc_info=True)
         window.close()
+        profile.release()
 
 
 def run() -> None:

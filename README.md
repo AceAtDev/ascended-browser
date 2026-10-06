@@ -157,6 +157,10 @@ context.
   model.
 - One server process is one browser session: tabs and refs last until your
   client disconnects; the profile (cookies, sign-ins) lasts across sessions.
+  Several sessions can run at once: the first one uses the saved profile, and
+  any other one started while it runs gets its own copy, already signed in to
+  whatever the saved profile was. Sign-ins made in a copy end with that
+  session.
 
 ## How it is built
 
