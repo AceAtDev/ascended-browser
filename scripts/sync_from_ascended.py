@@ -179,8 +179,9 @@ def tool_schemas(source: Path, python: Path) -> list[dict]:
     touches a real install's settings or database.
     """
     script = (
-        "import json, os, sys, tempfile\n"
-        "d = tempfile.mkdtemp(); os.environ.update(DATA_DIR=d, ODYSSEUS_DATA_DIR=d, DATABASE_URL=f'sqlite:///{d}/x.db')\n"
+        "import atexit, json, os, shutil, sys, tempfile\n"
+        "d = tempfile.mkdtemp(); atexit.register(shutil.rmtree, d, True)\n"
+        "os.environ.update(DATA_DIR=d, ODYSSEUS_DATA_DIR=d, DATABASE_URL=f'sqlite:///{d}/x.db')\n"
         f"sys.path.insert(0, {str(source)!r}); os.chdir({str(source)!r})\n"
         "import src.agent_tools\n"
         "from src.tool_schemas import FUNCTION_TOOL_SCHEMAS\n"

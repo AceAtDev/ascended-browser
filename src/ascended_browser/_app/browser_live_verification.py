@@ -83,6 +83,13 @@ def _as_workspace_error(core: Any, exc: Exception) -> Exception:
     """
     error = core.WorkspaceError(str(exc))
     error.dispatched = bool(getattr(exc, "dispatched", True))
+    # The evidence the control captured while its popup was open, and its
+    # type: dropped here, a no-match select reported error_kind "navigation"
+    # and lost its observed_options (live, 2026-10-05).
+    for key in ("error_kind", "observed_options", "popup_strategy", "inspect"):
+        value = getattr(exc, key, None)
+        if value:
+            setattr(error, key, value)
     return error
 
 

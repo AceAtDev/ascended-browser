@@ -393,6 +393,13 @@ class _VirtualDisplayContext:
             self._inner = AsyncCamoufox(**{**self.launch_options, "headless": False, "virtual_display": display})
             return await self._inner.__aenter__()
         except BaseException:
+            process = self._xvfb
+            log.warning(
+                "Camoufox launch on virtual display %s failed; its Xvfb (pid %s) %s",
+                display, getattr(process, "pid", "?"),
+                "is still running" if process is not None and process.poll() is None
+                else f"had exited with {getattr(process, 'returncode', '?')}",
+            )
             self._stop_xvfb()
             raise
 

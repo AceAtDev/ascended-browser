@@ -420,6 +420,41 @@ def _check_rate_limit(page_url: str, item_id: str, *, cap: int = 2, window_secon
     return True
 
 
+def _rate_limit_wait_seconds(page_url: str, item_id: str, *, window_seconds: int = 600) -> int:
+    """Seconds until the oldest fill in the window expires and a fill is allowed."""
+    now = time.time()
+    attempts = [
+        float(ts) for ts in _load_rate_data().get(_rate_key(page_url, item_id), [])
+        if now - float(ts) < window_seconds
+    ]
+    return max(1, int(min(attempts) + window_seconds - now) + 1) if attempts else 0
+
+
+def _rate_limited_result(page_url: str, item_id: str) -> dict:
+    # It said only "Login fill rate limit reached." with exit_code 0, and a
+    # run retried it four more times in one turn (session 722b3c33, Ciena).
+    # Fail visibly, say when a fill is allowed again, and name the likelier
+    # cause: the earlier fills may already have signed in.
+    wait = _rate_limit_wait_seconds(page_url, item_id)
+    minutes = max(1, -(-wait // 60))
+    return {
+        "status": "rate_limited",
+        "error": (
+            f"Login not attempted: this account was already filled twice on {_origin(page_url)} "
+            f"in the last 10 minutes. The next fill is allowed in about {minutes} min."
+        ),
+        "error_kind": "rate_limited",
+        "exit_code": 1,
+        "retry_after_seconds": wait,
+        "message": (
+            "Observe the page first: an earlier fill may already have signed in. If it did not, "
+            "the page likely rejected the login; ask the user instead of retrying."
+        ),
+        "filled": False,
+        "submitted": False,
+    }
+
+
 def _totp_code(secret: str) -> str:
     raw = (secret or "").strip()
     if not raw:
@@ -764,9 +799,17 @@ async def _fill_fields(page, fields: LoginFields, *, item: Optional[dict] = None
             await _remove_login_markers(frame, marker)
 
 
-async def _safe_submit(page, matched_url: str) -> tuple[bool, str]:
+async def _safe_submit(page, matched_url: str, *, top_page: Any = None) -> tuple[bool, str]:
+    """Choose the login form's submit control and press it through the click ladder.
+
+    The script only marks the control. It used to call ``el.click()``, a
+    synthetic click that bypassed the ladder and that some sign-in buttons
+    ignore: Ciena's Workday kept showing its login form after two "filled"
+    logins, and the run then retried into the rate limit (session 722b3c33).
+    """
     matched_origin = _origin(matched_url)
     script = """(matchedOrigin) => {
+      document.querySelectorAll('[data-odysseus-login-submit]').forEach(el => el.removeAttribute('data-odysseus-login-submit'));
       const visible = el => !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
       const norm = el => ((el.getAttribute('autocomplete') || '') + ' ' + (el.name || '') + ' ' + (el.id || '') + ' ' + (el.placeholder || '') + ' ' + (el.getAttribute('aria-label') || '')).toLowerCase();
       const labels = /^(log\\s*in|login|sign\\s*in|signin|continue|next|submit)$/i;
@@ -803,13 +846,27 @@ async def _safe_submit(page, matched_url: str) -> tuple[bool, str]:
             return { ok: false, reason: 'unresolvable_form_action' };
           }
         }
-        el.click();
-        return { ok: true, reason: 'clicked' };
+        el.setAttribute('data-odysseus-login-submit', '1');
+        return { ok: true, reason: 'found' };
       }
       return { ok: false, reason: 'no_obvious_submit' };
     }"""
     result = await page.evaluate(script, matched_origin)
-    return bool(result.get("ok")), str(result.get("reason") or "")
+    if not result.get("ok"):
+        return False, str(result.get("reason") or "")
+    from ascended_browser._app.browser_click_helpers import activate_locator
+
+    control = page.locator('[data-odysseus-login-submit="1"]').first
+    try:
+        await activate_locator(top_page or page, page, control, target="login submit", budget_seconds=8)
+    except Exception as exc:
+        return False, f"click_failed: {scrub_secret_text(exc)[:160]}"
+    finally:
+        try:
+            await control.evaluate("el => el.removeAttribute('data-odysseus-login-submit')")
+        except Exception:
+            pass  # the click may have navigated away; nothing left to unmark
+    return True, "clicked"
 
 
 async def login_fill_page(page, *, submit: bool = False, account_hint: str = "", wait_ms: int = 500, owner: str | None = None) -> dict:
@@ -820,7 +877,7 @@ async def login_fill_page(page, *, submit: bool = False, account_hint: str = "",
             return {**status, "filled": False, "submitted": False}
         item_id = str(item.get("id") or "")
         if not _check_rate_limit(page_url, item_id):
-            return {"status": "rate_limited", "filled": False, "submitted": False, "message": "Login fill rate limit reached."}
+            return _rate_limited_result(page_url, item_id)
         login = item.get("login") if isinstance(item.get("login"), dict) else {}
         fields = LoginFields(
             username=str(login.get("username") or ""),
@@ -858,7 +915,7 @@ async def login_fill_page(page, *, submit: bool = False, account_hint: str = "",
         if submit and required_field_filled:
             target_frame = filled.get("_target_frame") or page
             target_url = str(filled.get("_target_url") or page_url)
-            submitted, submit_reason = await _safe_submit(target_frame, target_url)
+            submitted, submit_reason = await _safe_submit(target_frame, target_url, top_page=page)
             if wait_ms:
                 await page.wait_for_timeout(max(0, min(int(wait_ms), 5000)))
         return {
