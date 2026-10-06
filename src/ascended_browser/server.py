@@ -150,7 +150,9 @@ async def serve(protocol_out: io.TextIOWrapper) -> None:
                          log_find, log_geometry, refs_in_result)
 
     from .browser_build import prefetch
+    from .inflight import Journal, interrupted_note, recovered_note
     from .logins import install as install_logins
+    from .logins import scrub
     from .profiles import NOTICE, claim
 
     prefetch()  # first run: start the browser download now, not at the first tool call
@@ -164,6 +166,8 @@ async def serve(protocol_out: io.TextIOWrapper) -> None:
     root = data_dir()
     profile = claim(root)
     notice = [] if profile.primary else [NOTICE]
+    journal = Journal(root)
+    unfinished = journal.recover()  # actions an ended session never reported back
     manager = Manager(store=WorkspaceStore(str(profile.root)),
                       auth_store=AuthStateStore(str(root / "auth")))
     manager.auth_store.mark_migrated(OWNER, {"migrated": True})
@@ -194,10 +198,17 @@ async def serve(protocol_out: io.TextIOWrapper) -> None:
         if name == "browser_act" and action.get("ref") and action.get("kind") in {"type", "fill", "select", "press"}:
             await log_boxes(manager, OWNER, session, str(args.get("tab_id") or ""), "field",
                             [(str(action["ref"]), "field")])
-        if name == "browser_viewport":
-            result = await _viewport(window, manager, session, args, do_browser_workspace)
-        else:
-            result = await do_browser_workspace(name, json.dumps(args), owner=OWNER, session_id=session)
+        pending = journal.begin(name, args)
+        try:
+            if name == "browser_viewport":
+                result = await _viewport(window, manager, session, args, do_browser_workspace)
+            else:
+                result = await do_browser_workspace(name, json.dumps(args), owner=OWNER, session_id=session)
+        except anyio.get_cancelled_exc_class():
+            journal.interrupted(pending)  # the turn stopped mid-action; tell the next one
+            raise
+        finally:
+            journal.end(pending)
         if isinstance(result, dict) and result.get("tab_id") and name in {"browser_open", "browser_viewport"}:
             if name == "browser_open":
                 await apply_frame_size(window)
@@ -205,8 +216,16 @@ async def serve(protocol_out: io.TextIOWrapper) -> None:
         if not isinstance(result, dict):
             result = {"error": f"{name} returned no result", "exit_code": 1}
         content, failed = _content(name, args, result, session)
+        tab_id = str(result.get("tab_id") or args.get("tab_id") or "")
+        journal.learn(tab_id, content[0].text if content else "")
         if notice and name == "browser_open" and not failed:  # said once, with the first page this session opens
             content.insert(0, types.TextContent(type="text", text=notice.pop()))
+        told = journal.notes_for(tab_id)
+        if told:
+            content.insert(0, types.TextContent(type="text", text=scrub(interrupted_note(told))))
+        if unfinished:
+            content.insert(0, types.TextContent(type="text", text=scrub(recovered_note(unfinished))))
+            unfinished.clear()
         text = "\n".join(getattr(c, "text", "") for c in content)
         if name == "browser_extract" and not failed and (args.get("read") == "audit" or args.get("selector")):
             audit = args.get("read") == "audit"

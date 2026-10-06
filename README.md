@@ -137,6 +137,14 @@ Long results come back clipped, with an `evidence_ref` that
 `browser_extract` pages through, so a huge page cannot flood the agent's
 context.
 
+Every action waits for the page to settle, under a hard timeout, and says
+when its effect could not be confirmed. If a turn ends while one is still
+running, the next turn is told instead of finding a page it cannot explain:
+an interrupted click (you stopped the turn) is named in the next result for
+that tab, and an action whose server died (`claude -p` ending, an SSH session
+dropping) is listed with the first result of the next session, so the agent
+checks before it repeats an order or a form.
+
 ## Saved logins
 
 Save a login once and the agent can sign in with it, without ever seeing it.
