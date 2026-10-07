@@ -4,7 +4,7 @@
     <img src="https://github.com/AceAtDev/ascended-browser/raw/main/docs/assets/ascended-browser-light.png" alt="ascended-browser icon" width="96" height="96">
   </picture>
 </p>
-<h1 align="center">ascended-browser</h1>
+<h1 align="center">Ascended Browser: browser MCP for coding-agent QA</h1>
 
 <p align="center"><strong>A real browser for your AI agent. One command to add.</strong></p>
 
@@ -14,7 +14,12 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
 </p>
 
-A real browser for AI agents, as an MCP server. Your agent opens pages, reads
+A local, open-source browser MCP server for Codex CLI, Claude Code and other
+MCP clients. Use it for interactive browser automation and front-end QA:
+inspect console logs and network requests, check responsive layouts, and
+collect screenshots alongside what happened on the page.
+
+Your agent opens pages, reads
 them, and acts on them through **verified actions**: it fills a whole form in
 one call, picks "Mrs." from a custom React dropdown by name, and is told what
 the page did in response, instead of clicking coordinates and hoping.
@@ -23,6 +28,22 @@ It is the browser from Ascended, packaged on its own:
 [Camoufox](https://camoufox.com) (a hardened Firefox that looks like a
 person's browser to the sites it visits) behind the same tool dispatcher, page
 reading and result formatting Ascended's own agent uses.
+
+## Start with a QA check
+
+[**Set up a browser MCP for Codex CLI or Claude Code and check your app**](docs/qa-quickstart.md).
+The guide covers installation, a copy-paste QA prompt, console and network
+inspection, bug-report structure, and what to do after an interrupted action.
+
+- **Check a local app:** walk through a flow and report errors before changing code.
+- **Inspect the evidence:** read failed requests and console errors, then capture the broken state.
+- **Use a Linux dev box:** run the client, MCP server and app on the same machine;
+  the guide explains how localhost behaves when you connect over SSH.
+
+This is agent-assisted exploratory QA, not a replacement for deterministic
+regression tests or a validated CI integration. Browser MCP tools are also
+available from projects such as Playwright MCP and Chrome DevTools MCP;
+console and network inspection are not exclusive to this server.
 
 ## See it work
 
