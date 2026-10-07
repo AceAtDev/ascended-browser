@@ -31,6 +31,10 @@ reading and result formatting Ascended's own agent uses.
 
 ## Start with a QA check
 
+[**Read the documentation site**](https://aceatdev.github.io/ascended-browser/):
+[QA setup](https://aceatdev.github.io/ascended-browser/qa-quickstart/) and
+[interrupted-action reproduction](https://aceatdev.github.io/ascended-browser/interrupted-actions/).
+
 [**Set up a browser MCP for Codex CLI or Claude Code and check your app**](docs/qa-quickstart.md).
 The guide covers installation, a copy-paste QA prompt, console and network
 inspection, bug-report structure, and what to do after an interrupted action.

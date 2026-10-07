@@ -7,3 +7,5 @@ build/
 /runs/
 /videos/raw/
 runs/
+_site/
+.qa-client-check/
