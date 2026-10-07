@@ -32,7 +32,15 @@ codex mcp add ascended-browser -- npx -y ascended-browser@0.1.5
 
 The launcher needs Node/npm plus uv, pipx or Python 3.11+. The initial Camoufox download is about 700 MB. [Follow the full setup guide](qa-quickstart/) for approval controls, a QA prompt and tested smoke-check commands.
 
-## Pick the workflow, not the hype
+## QA recipes
+
+Three distinct tasks, with instructions and evidence from an intentionally broken local fixture:
+
+- [Find console errors and failed network requests](debug-console-network/): correlate a failing request with the error shown in the app.
+- [Check responsive layouts](responsive-layout-qa/): inspect a fixed-width overflow defect at phone and desktop sizes.
+- [Test a login-protected app](authenticated-browser-testing/): disposable sessions, restart behavior and the security boundary.
+
+### Pick the workflow, not the hype
 
 Playwright MCP and Chrome DevTools MCP are valid alternatives; console and network inspection are not exclusive here. Ascended offers a local Camoufox-backed MCP with verified actions, bounded evidence and interrupted-action warnings. Choose it when that workflow fits your coding harness.
 

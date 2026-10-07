@@ -11,6 +11,9 @@ OUT = ROOT / '_site'
 BASE = 'https://aceatdev.github.io/ascended-browser/'
 REPO = 'https://github.com/AceAtDev/ascended-browser'
 PAGES = [
+    ('debug-console-network', ROOT / 'docs/debug-console-network.md', 'Find console errors and failed requests with Claude Code and a browser MCP', 'A reproducible local QA fixture, browser console and network evidence, and a copyable Claude Code or Codex prompt for debugging app failures.'),
+    ('responsive-layout-qa', ROOT / 'docs/responsive-layout-qa.md', 'Check responsive layouts with a coding agent and browser MCP', 'Check phone and desktop layouts with Ascended Browser. Reproduce a fixed-width overflow defect and inspect real screenshots without claiming mobile emulation.'),
+    ('authenticated-browser-testing', ROOT / 'docs/authenticated-browser-testing.md', 'Test login-protected apps with a browser MCP and saved sessions', 'Use disposable accounts and persisted browser sessions for agent-assisted QA. See a cookie-reuse test and understand vault, session and MFA limitations.'),
     ('', ROOT / 'site/index.md', 'Ascended Browser | Local browser MCP for coding-agent QA', 'A local browser MCP for Codex CLI and Claude Code. Inspect console and network errors, collect screenshots and check interrupted actions.'),
     ('qa-quickstart', ROOT / 'docs/qa-quickstart.md', 'Browser MCP setup and QA guide for Codex CLI and Claude Code', 'Install Ascended Browser, connect your coding client and run a bounded QA check on a local app, with console logs, failed requests and evidence.'),
     ('interrupted-actions', ROOT / 'docs/interrupted-actions.md', 'Interrupted browser actions: recovery warnings and retry risks', 'Reproduce cancelled browser actions, SIGTERM and simulated SSH hangups. Learn what Ascended Browser 0.1.5 reports and why retries need fresh observations.'),
@@ -20,6 +23,8 @@ PAGES = [
 def build():
     OUT.mkdir(exist_ok=True)
     shutil.copyfile(ROOT / 'site/style.css', OUT / 'style.css')
+    if (ROOT / 'site/assets').exists():
+        shutil.copytree(ROOT / 'site/assets', OUT / 'assets', dirs_exist_ok=True)
     for slug, source, title, description in PAGES:
         text = source.read_text()
         text = re.sub(r'\.\./README\.md(#[\w-]+)?', lambda m: REPO + (m[1] or '#readme'), text)
@@ -29,6 +34,7 @@ def build():
         prefix = '../' if slug else './'
         links = [('Overview', ''), ('QA setup', 'qa-quickstart'), ('Codex + SSH', 'codex-cli-browser-ssh'), ('Interruptions', 'interrupted-actions')]
         nav = ''.join(f'<a href="{prefix}{s + "/" if s else ""}"' + (' aria-current="page"' if s == slug else '') + f'>{name}</a>' for name, s in links)
+        nav += f'<a href="{prefix}#qa-recipes">QA recipes</a>'
         toc = f'<aside class="toc" aria-label="On this page"><strong>On this page</strong>{md.toc}</aside>' if slug else ''
         page = f'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(title)}</title><meta name="description" content="{html.escape(description)}"><link rel="canonical" href="{canonical}"><meta property="og:title" content="{html.escape(title)}"><meta property="og:description" content="{html.escape(description)}"><meta property="og:url" content="{canonical}"><meta property="og:type" content="website"><meta name="theme-color" content="#245b38"><link rel="stylesheet" href="{prefix}style.css"></head>

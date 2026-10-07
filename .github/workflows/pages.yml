@@ -2,7 +2,7 @@ name: Deploy documentation to GitHub Pages
 on:
   push:
     branches: [main]
-    paths: ['site/**', 'docs/qa-quickstart.md', 'docs/interrupted-actions.md', 'docs/codex-cli-browser-ssh.md', 'scripts/build_site.py', '.github/workflows/pages.yml']
+    paths: ['site/**', 'docs/**', 'scripts/build_site.py', '.github/workflows/pages.yml']
   workflow_dispatch:
 permissions:
   contents: read

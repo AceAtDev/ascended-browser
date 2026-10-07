@@ -37,6 +37,11 @@ reading and result formatting Ascended's own agent uses.
 
 Running Codex CLI over SSH and missing a browser? [Connect a browser MCP on your Linux dev box](https://aceatdev.github.io/ascended-browser/codex-cli-browser-ssh/) with setup commands, localhost guidance and alternatives.
 
+Practical recipes with real local-fixture screenshots:
+- [Find console errors and failed requests](https://aceatdev.github.io/ascended-browser/debug-console-network/).
+- [Check responsive layouts](https://aceatdev.github.io/ascended-browser/responsive-layout-qa/).
+- [Test login-protected pages and session reuse](https://aceatdev.github.io/ascended-browser/authenticated-browser-testing/).
+
 [**Set up a browser MCP for Codex CLI or Claude Code and check your app**](docs/qa-quickstart.md).
 The guide covers installation, a copy-paste QA prompt, console and network
 inspection, bug-report structure, and what to do after an interrupted action.
