@@ -7,12 +7,14 @@ The site uses the QA quickstart and interruption guide in `docs/`, plus `site/in
 From the repository root, install the build dependency and run:
 
 ```bash
-python -m pip install Markdown==3.10.2
+PIP_USER=0 python -m pip install Markdown==3.10.2
 python scripts/build_site.py
 python -m http.server 8765 --directory _site
 ```
 
 Open `http://localhost:8765/`. Relative navigation works locally; canonical URLs and the sitemap deliberately use the production GitHub Pages URL.
+
+`PIP_USER=0` avoids a forced user-site installation when your Python is already inside a virtual environment.
 
 ## Deploy on GitHub Pages
 
