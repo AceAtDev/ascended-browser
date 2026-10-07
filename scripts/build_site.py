@@ -14,6 +14,7 @@ PAGES = [
     ('', ROOT / 'site/index.md', 'Ascended Browser | Local browser MCP for coding-agent QA', 'A local browser MCP for Codex CLI and Claude Code. Inspect console and network errors, collect screenshots and check interrupted actions.'),
     ('qa-quickstart', ROOT / 'docs/qa-quickstart.md', 'Browser MCP setup and QA guide for Codex CLI and Claude Code', 'Install Ascended Browser, connect your coding client and run a bounded QA check on a local app, with console logs, failed requests and evidence.'),
     ('interrupted-actions', ROOT / 'docs/interrupted-actions.md', 'Interrupted browser actions: recovery warnings and retry risks', 'Reproduce cancelled browser actions, SIGTERM and simulated SSH hangups. Learn what Ascended Browser 0.1.5 reports and why retries need fresh observations.'),
+    ('codex-cli-browser-ssh', ROOT / 'docs/codex-cli-browser-ssh.md', 'Codex CLI browser over SSH: connect a browser MCP on Linux', 'Codex CLI has no built-in browser. Connect a local browser MCP on your Linux SSH dev box, understand localhost, and check app errors with evidence.'),
 ]
 
 def build():
@@ -26,12 +27,13 @@ def build():
         body = md.convert(text)
         canonical = BASE + (slug + '/' if slug else '')
         prefix = '../' if slug else './'
-        links = [('Overview', ''), ('QA setup', 'qa-quickstart'), ('Interruptions', 'interrupted-actions')]
+        links = [('Overview', ''), ('QA setup', 'qa-quickstart'), ('Codex + SSH', 'codex-cli-browser-ssh'), ('Interruptions', 'interrupted-actions')]
         nav = ''.join(f'<a href="{prefix}{s + "/" if s else ""}"' + (' aria-current="page"' if s == slug else '') + f'>{name}</a>' for name, s in links)
         toc = f'<aside class="toc" aria-label="On this page"><strong>On this page</strong>{md.toc}</aside>' if slug else ''
         page = f'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(title)}</title><meta name="description" content="{html.escape(description)}"><link rel="canonical" href="{canonical}"><meta property="og:title" content="{html.escape(title)}"><meta property="og:description" content="{html.escape(description)}"><meta property="og:url" content="{canonical}"><meta property="og:type" content="website"><meta name="theme-color" content="#245b38"><link rel="stylesheet" href="{prefix}style.css"></head>
 <body class="{'home' if not slug else 'guide'}"><a class="skip" href="#main">Skip to content</a><header class="top"><nav class="nav" aria-label="Main navigation"><a class="brand" href="{prefix}"><span aria-hidden="true">↗</span>Ascended Browser</a><div class="navlinks">{nav}<a href="{REPO}">GitHub ↗</a></div></nav></header><div class="wrap"><main id="main"><div class="eyebrow">Local browser MCP / coding-agent QA</div>{body}</main>{toc}</div><footer><div><span>Ascended Browser · Open source, MIT licensed</span><span><a href="{REPO}/issues">Report an issue</a> · No analytics or tracking scripts</span></div></footer></body></html>'''
+        page = page.replace('<meta name="theme-color"', '<meta name="google-site-verification" content="40GRBRi7A5LTTFmeA1fZ0j8PVeNEI9OHbkt_cxnxdUA"><meta name="theme-color"')
         dest = OUT / slug
         dest.mkdir(exist_ok=True)
         (dest / 'index.html').write_text(page)

@@ -112,6 +112,8 @@ The server warned that its live-view service was unavailable; browser automation
 
 ## Use localhost correctly over SSH
 
+For a direct answer to “Codex CLI has no browser when I SSH,” see the [browser-over-SSH setup guide](../codex-cli-browser-ssh/).
+
 If you SSH into a Linux dev box and run the coding client there, install and configure the MCP there too. A stdio MCP runs on the client's machine, so `127.0.0.1` refers to that dev box, not your laptop. Your app must be reachable from that machine. No remote HTTP MCP endpoint is required for this arrangement.
 
 Version 0.1.5 surfaces interrupted or unfinished actions in later tool results. It asks the agent to inspect before retrying; it does not enforce exactly-once actions or restore old refs after a server restart. A new session needs fresh observations. Treat the SSH arrangement as a setup pattern to validate on your own environment, not an end-to-end guarantee from this guide.

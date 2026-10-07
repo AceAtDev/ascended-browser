@@ -20,6 +20,8 @@ Ascended Browser is an open-source, local browser MCP for **Codex CLI, Claude Co
 
 ## One connection, then a bounded task
 
+**Running Codex CLI over SSH and missing a browser?** Run a browser MCP on the Linux machine where Codex runs. [Follow the Codex CLI browser-over-SSH guide](codex-cli-browser-ssh/) for commands, localhost behavior and alternatives. Ascended is one option, not the only browser MCP for Codex.
+
 From your project directory, after checking prerequisites:
 
 ```bash
@@ -39,5 +41,6 @@ This is **agent-assisted exploratory QA**, not a validated CI integration or a r
 ## Start with a task you can reproduce
 
 - [Set up a browser MCP for Codex CLI or Claude Code](qa-quickstart/): installation, prompt, console/network evidence and a report template.
+- [Give Codex CLI a browser on an SSH dev box](codex-cli-browser-ssh/): direct answer, setup commands, alternatives and recovery limits.
 - [Understand interrupted browser actions](interrupted-actions/): the failure scenario, reproduction harness and limits of recovery warnings.
 - [Report an issue](https://github.com/AceAtDev/ascended-browser/issues): include your client, package version, environment and a disposable reproduction.
