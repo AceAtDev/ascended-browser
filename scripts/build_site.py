@@ -25,6 +25,9 @@ def build():
     shutil.copyfile(ROOT / 'site/style.css', OUT / 'style.css')
     if (ROOT / 'site/assets').exists():
         shutil.copytree(ROOT / 'site/assets', OUT / 'assets', dirs_exist_ok=True)
+    (OUT / 'assets').mkdir(exist_ok=True)
+    for variant in ('light', 'dark'):
+        shutil.copyfile(ROOT / f'docs/assets/ascended-browser-{variant}.png', OUT / f'assets/ascended-browser-{variant}.png')
     for slug, source, title, description in PAGES:
         text = source.read_text()
         text = re.sub(r'\.\./README\.md(#[\w-]+)?', lambda m: REPO + (m[1] or '#readme'), text)
@@ -37,8 +40,8 @@ def build():
         nav += f'<a href="{prefix}#qa-recipes">QA recipes</a>'
         toc = f'<aside class="toc" aria-label="On this page"><strong>On this page</strong>{md.toc}</aside>' if slug else ''
         page = f'''<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(title)}</title><meta name="description" content="{html.escape(description)}"><link rel="canonical" href="{canonical}"><meta property="og:title" content="{html.escape(title)}"><meta property="og:description" content="{html.escape(description)}"><meta property="og:url" content="{canonical}"><meta property="og:type" content="website"><meta name="theme-color" content="#245b38"><link rel="stylesheet" href="{prefix}style.css"></head>
-<body class="{'home' if not slug else 'guide'}"><a class="skip" href="#main">Skip to content</a><header class="top"><nav class="nav" aria-label="Main navigation"><a class="brand" href="{prefix}"><span aria-hidden="true">↗</span>Ascended Browser</a><div class="navlinks">{nav}<a href="{REPO}">GitHub ↗</a></div></nav></header><div class="wrap"><main id="main"><div class="eyebrow">Local browser MCP / coding-agent QA</div>{body}</main>{toc}</div><footer><div><span>Ascended Browser · Open source, MIT licensed</span><span><a href="{REPO}/issues">Report an issue</a> · No analytics or tracking scripts</span></div></footer></body></html>'''
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(title)}</title><meta name="description" content="{html.escape(description)}"><link rel="canonical" href="{canonical}"><meta property="og:title" content="{html.escape(title)}"><meta property="og:description" content="{html.escape(description)}"><meta property="og:url" content="{canonical}"><meta property="og:type" content="website"><meta name="theme-color" content="#5b6ee1"><link rel="icon" type="image/png" href="{prefix}assets/ascended-browser-light.png" media="(prefers-color-scheme: light)"><link rel="icon" type="image/png" href="{prefix}assets/ascended-browser-dark.png" media="(prefers-color-scheme: dark)"><link rel="stylesheet" href="{prefix}style.css"></head>
+<body class="{'home' if not slug else 'guide'}"><a class="skip" href="#main">Skip to content</a><header class="top"><nav class="nav" aria-label="Main navigation"><a class="brand" href="{prefix}"><picture><source media="(prefers-color-scheme: dark)" srcset="{prefix}assets/ascended-browser-dark.png"><img src="{prefix}assets/ascended-browser-light.png" alt="" width="48" height="48"></picture>Ascended Browser</a><div class="navlinks">{nav}<a href="{REPO}">GitHub ↗</a></div></nav></header><div class="wrap"><main id="main"><div class="eyebrow">Local browser MCP / coding-agent QA</div>{body}</main>{toc}</div><footer><div><span>Ascended Browser · Open source, MIT licensed</span><span><a href="{REPO}/issues">Report an issue</a> · No analytics or tracking scripts</span></div></footer></body></html>'''
         page = page.replace('<meta name="theme-color"', '<meta name="google-site-verification" content="40GRBRi7A5LTTFmeA1fZ0j8PVeNEI9OHbkt_cxnxdUA"><meta name="theme-color"')
         dest = OUT / slug
         dest.mkdir(exist_ok=True)
@@ -47,6 +50,7 @@ def build():
     for slug, *_ in PAGES:
         ET.SubElement(ET.SubElement(root, 'url'), 'loc').text = BASE + (slug + '/' if slug else '')
     ET.ElementTree(root).write(OUT / 'sitemap.xml', encoding='utf-8', xml_declaration=True)
+    (OUT / 'sitemap.txt').write_text('\n'.join(BASE + (slug + '/' if slug else '') for slug, *_ in PAGES) + '\n', encoding='utf-8')
     (OUT / '.nojekyll').touch()
     (OUT / '404.html').write_text('<!doctype html><html lang="en"><title>Page not found | Ascended Browser</title><h1>Page not found</h1><p><a href="/ascended-browser/">Return to Ascended Browser docs</a></p></html>')
     print(f'Built {len(PAGES)} pages in {OUT}')
