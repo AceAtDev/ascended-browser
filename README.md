@@ -24,7 +24,8 @@ them, and acts on them through **verified actions**: it fills a whole form in
 one call, picks "Mrs." from a custom React dropdown by name, and is told what
 the page did in response, instead of clicking coordinates and hoping.
 
-It is the browser from Ascended, packaged on its own:
+Ascended is my own private agent workspace; this package extracts its browser
+so it can run on its own:
 [Camoufox](https://camoufox.com) (a hardened Firefox that looks like a
 person's browser to the sites it visits) behind the same tool dispatcher, page
 reading and result formatting Ascended's own agent uses.
@@ -263,8 +264,8 @@ card, say) is not matched.
 
 ## How it is built
 
-`src/ascended_browser/_app` is generated from Ascended by
-`scripts/sync_from_ascended.py`: the browser modules copied as they are, the
+`src/ascended_browser/_app` is generated from my Ascended app by
+`scripts/sync_from_ascended.py`: the browser modules taken unchanged, the
 browser tool dispatcher and result formatter extracted by reachability, and
 every import of the rest of the app rewritten to `runtime/` (small standalone
 stand-ins). The sync refuses any app import it cannot map.
