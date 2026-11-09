@@ -1,3 +1,5 @@
+<!-- mcp-name: io.github.AceAtDev/ascended-browser -->
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://github.com/AceAtDev/ascended-browser/raw/main/docs/assets/ascended-browser-dark.png">
