@@ -1,0 +1,19 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.AceAtDev/ascended-browser",
+  "title": "Ascended Browser",
+  "description": "Local Camoufox browser MCP with verified actions, page reading and QA diagnostics.",
+  "repository": {
+    "url": "https://github.com/AceAtDev/ascended-browser",
+    "source": "github"
+  },
+  "version": "0.1.7",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "ascended-browser",
+      "version": "0.1.7",
+      "transport": { "type": "stdio" }
+    }
+  ]
+}
